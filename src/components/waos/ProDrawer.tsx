@@ -5,16 +5,20 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
 } from '@/components/ui/sheet'
 import {
+  Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
+} from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
+import {
   Flame, Bot, Radio, Clock, TrendingUp, Lock, X, Shield, Zap, Cpu,
   AlertTriangle, Send, Heart, MessageSquare, Image as ImageIcon, Mic,
   Activity, Filter, GitBranch, Users, Bell, CheckCircle2, Play, Pause,
-  RefreshCw, Plus, Eye,
+  RefreshCw, Plus, Eye, Database, Loader2,
 } from 'lucide-react'
 import { SchedulerView, MetricsView, FunnelView, AbView } from './RightPanel'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
-type Panel = 'scheduler' | 'ai' | 'channel' | 'lifecycle' | 'attribution' | 'infra' | 'metrics' | 'funnel' | 'ab' | 'audit' | 'llm'
+type Panel = 'scheduler' | 'ai' | 'channel' | 'lifecycle' | 'attribution' | 'infra' | 'metrics' | 'funnel' | 'ab' | 'audit' | 'llm' | 'crm'
 
 // 通俗命名 + 介绍
 const TABS: { id: Panel; label: string; icon: React.ReactNode; module: string; desc: string }[] = [
@@ -29,6 +33,7 @@ const TABS: { id: Panel; label: string; icon: React.ReactNode; module: string; d
   { id: 'funnel',     label: '转化漏斗',   icon: <Filter className="w-3.5 h-3.5" />,     module: '5', desc: '从曝光到成交' },
   { id: 'ab',         label: 'AB 实验',    icon: <GitBranch className="w-3.5 h-3.5" />,  module: '5', desc: '人设/话术对比' },
   { id: 'audit',      label: '操作记录',   icon: <Shield className="w-3.5 h-3.5" />,     module: '6', desc: '谁做了什么' },
+  { id: 'crm',        label: 'CRM 线索',  icon: <Database className="w-3.5 h-3.5" />,   module: '8', desc: '线索表 + 乐观锁' },
 ]
 
 export function ProDrawer() {
@@ -85,6 +90,7 @@ export function ProDrawer() {
           {panel === 'funnel' && <FunnelView />}
           {panel === 'ab' && <AbView />}
           {panel === 'audit' && <AuditPanel />}
+          {panel === 'crm' && <CrmPanel />}
         </div>
       </SheetContent>
     </Sheet>
@@ -911,6 +917,211 @@ function AuditPanel() {
         </ul>
       )}
     </div>
+  )
+}
+
+// ─── 模块8: CRM 线索表 + 乐观锁测试 ─────────────────────────────
+function CrmPanel() {
+  const leads = useOpsStore(s => s.leads)
+  const clientViewLeadId = useOpsStore(s => s.clientViewLeadId)
+  const selectLead = useOpsStore(s => s.selectLead)
+  const testOptimisticLock = useOpsStore(s => s.testOptimisticLock)
+
+  // 乐观锁测试状态
+  const [testing, setTesting] = useState(false)
+  const [result, setResult] = useState<{
+    success: boolean
+    conflict: boolean
+    message: string
+    oldVersion: number
+    newVersion: number
+    leadId: string
+    leadName: string
+  } | null>(null)
+
+  // 当前选中线索（默认用 clientViewLeadId）
+  const selectedLead = leads.find(l => l.id === clientViewLeadId) || leads[0] || null
+
+  // 点击"乐观锁测试"按钮
+  const handleTestLock = async () => {
+    if (!selectedLead || testing) return
+    setTesting(true)
+    setResult(null)
+    try {
+      const r = await testOptimisticLock(selectedLead.id)
+      setResult({ ...r, leadId: selectedLead.id, leadName: selectedLead.userName })
+      if (r.success) {
+        toast.success('乐观锁更新成功', { description: `${selectedLead.userName} v${r.oldVersion} → v${r.newVersion}` })
+      } else if (r.conflict) {
+        toast.error('乐观锁冲突', { description: `${selectedLead.userName} 当前 v${r.newVersion}，请刷新后重试` })
+      }
+    } catch (e) {
+      toast.error('测试异常', { description: String(e) })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <div className="p-4 space-y-4">
+      <ModuleIntro num="8" title="CRM 线索" desc="5 列线索表（姓名/意向/价值/状态/版本号）+ 乐观锁冲突测试" />
+
+      {/* 线索表格 5 列 */}
+      <Section title="线索列表（点击行选中后测试乐观锁）" icon={<Database className="w-3.5 h-3.5 text-emerald-500" />}>
+        <div className="rounded-lg border border-border/60 overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-secondary/50 hover:bg-secondary/50">
+                <TableHead className="text-[11px] font-semibold">姓名</TableHead>
+                <TableHead className="text-[11px] font-semibold text-right">意向分</TableHead>
+                <TableHead className="text-[11px] font-semibold text-right">价值分</TableHead>
+                <TableHead className="text-[11px] font-semibold">状态</TableHead>
+                <TableHead className="text-[11px] font-semibold text-center">版本号</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {leads.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-[11px] text-muted-foreground py-8">
+                    暂无线索
+                  </TableCell>
+                </TableRow>
+              ) : (
+                leads.map(lead => {
+                  const isSelected = lead.id === selectedLead?.id
+                  return (
+                    <TableRow
+                      key={lead.id}
+                      onClick={() => selectLead(lead.id)}
+                      data-state={isSelected ? 'selected' : undefined}
+                      className={`cursor-pointer ${isSelected ? 'bg-primary/5' : ''}`}
+                    >
+                      <TableCell className="text-[12px] font-medium">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className="w-1.5 h-1.5 rounded-full shrink-0"
+                            style={{ backgroundColor: lead.personaColor || '#94a3b8' }}
+                          />
+                          {lead.userName}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-[11px] font-mono text-right tabular-nums">
+                        <ScoreBadge score={lead.intentScore} />
+                      </TableCell>
+                      <TableCell className="text-[11px] font-mono text-right tabular-nums">
+                        <ScoreBadge score={lead.valueScore} />
+                      </TableCell>
+                      <TableCell>
+                        <StageBadge stage={lead.stage} />
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <VersionBadge version={lead.version} />
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </Section>
+
+      {/* 乐观锁测试按钮 */}
+      <Section
+        title="乐观锁测试（模拟并发冲突）"
+        icon={<Lock className="w-3.5 h-3.5 text-amber-500" />}
+      >
+        <div className="p-3 rounded-lg bg-secondary/50 border border-border/60 space-y-2.5">
+          <div className="text-[11px] text-muted-foreground leading-relaxed">
+            选中线索：<b className="text-foreground">{selectedLead?.userName || '—'}</b>
+            <span className="ml-2 text-[10px] font-mono">当前版本 v{selectedLead?.version ?? 0}</span>
+          </div>
+          <div className="text-[10px] text-muted-foreground leading-relaxed">
+            规则：v1 时直接推进 stage → v2（成功）；v2+ 时模拟用 v-1 过期更新（应冲突失败）。
+            真实场景下 Prisma 用 <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono text-[9px]">where:{`{ id, version }`}</code> 条件更新，命中 0 行即视为冲突。
+          </div>
+          <button
+            onClick={handleTestLock}
+            disabled={!selectedLead || testing}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] rounded-md bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 active:scale-[0.98] transition-all apple-btn disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+            {testing ? '测试中…' : '乐观锁测试'}
+          </button>
+
+          {/* 冲突 / 成功提示 */}
+          {result && (
+            <div
+              className={`mt-1 px-3 py-2 rounded-md text-[11px] font-medium leading-relaxed border ${
+                result.success
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+                  : 'bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-400'
+              }`}
+              role="status"
+              aria-live="polite"
+            >
+              <div className="flex items-center gap-1.5">
+                {result.success
+                  ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+                <span>{result.message}</span>
+              </div>
+              <div className="text-[9px] font-mono mt-1 opacity-80">
+                lead={result.leadName} · old v{result.oldVersion} → new v{result.newVersion}
+              </div>
+            </div>
+          )}
+        </div>
+      </Section>
+    </div>
+  )
+}
+
+// ─── CRM 表格专用 Badge ────────────────────────────────────────
+// version 列颜色按版本号递增：v1 灰 / v2 蓝 / v3 绿 / v4+ 橙
+function VersionBadge({ version }: { version: number }) {
+  const colorMap: Record<string, string> = {
+    v1: 'bg-slate-500/15 text-slate-600 dark:text-slate-300 border-slate-500/30',
+    v2: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30',
+    v3: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+    v4plus: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
+  }
+  const key = version <= 0 ? 'v1' : version === 1 ? 'v1' : version === 2 ? 'v2' : version === 3 ? 'v3' : 'v4plus'
+  return (
+    <Badge variant="outline" className={`text-[10px] font-mono font-semibold ${colorMap[key]}`}>
+      v{version}
+    </Badge>
+  )
+}
+
+// 意向分 / 价值分小徽标（数字 + 颜色暗示）
+function ScoreBadge({ score }: { score: number }) {
+  const color =
+    score >= 80 ? 'text-rose-600 dark:text-rose-400'
+    : score >= 60 ? 'text-amber-600 dark:text-amber-400'
+    : score >= 40 ? 'text-sky-600 dark:text-sky-400'
+    : 'text-muted-foreground'
+  return <span className={`font-semibold ${color}`}>{score}</span>
+}
+
+// 状态机徽标
+function StageBadge({ stage }: { stage: string }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    new:        { label: '新建',    cls: 'bg-muted text-muted-foreground border-border' },
+    engaged:    { label: '互动中',  cls: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30' },
+    qualified:  { label: '已资质',  cls: 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30' },
+    warm:       { label: '温',      cls: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30' },
+    hot:        { label: 'HOT',     cls: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30' },
+    converted:  { label: '已成交',  cls: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' },
+    churned:    { label: '已流失',  cls: 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400 border-zinc-500/30' },
+    blocked:    { label: '已接管',  cls: 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30' },
+    cold:       { label: '冷',      cls: 'bg-slate-500/15 text-slate-500 dark:text-slate-400 border-slate-500/30' },
+  }
+  const item = map[stage] || { label: stage, cls: 'bg-muted text-muted-foreground border-border' }
+  return (
+    <Badge variant="outline" className={`text-[10px] font-semibold ${item.cls}`}>
+      {item.label}
+    </Badge>
   )
 }
 

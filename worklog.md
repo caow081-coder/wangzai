@@ -323,3 +323,133 @@ Stage Summary:
 - 本轮新增：Prisma 6 model + 防双端打架 + 4策略枚举 + EventBus + 核对报告
 - GitHub: commit faa130e，本地远端同步
 - 下一阶段：补齐朋友圈面板(模块9) + 动态乘数(模块1) + CRM表格version列(模块8)
+
+---
+Task ID: P1
+Agent: full-stack-developer
+Task: 开发朋友圈场控面板（补齐WAOS-X模块9）
+
+Work Log:
+- 前置阅读：worklog.md / wechat-video/connector.ts（参考接口模式）/ wechat-video/route.ts（参考 API 模式）/ WeChatClient.tsx 前 200 行（确认 navTab === 'moments' 挂载点）/ useOpsStore.ts 搜索"朋友圈"（确认旧 AIMomentsPost/refreshMoments 字段）
+- 新建 `src/lib/moments/connector.ts`（约 490 行）：定义 MomentPost / MomentComment / PatrolTask / PatrolLog / MomentsConnector 五接口；实现 calculateIntent 意向分算法（询价+30/试驾+25/好感+10/负面-10，clamp 0-100，与视频号/抖音对齐）；withTimeout 10s 超时保护；MockMomentsConnector 内置 6 条朋友圈种子（3 自 + 3 好友：新车到店/试驾活动/客户提车/优惠通知/保养提醒/品牌故事）+ 16 条评论（每条朋友圈 2-4 条）；patrol() 用 setInterval 每 500ms 推进 10% 进度，每 tick 扫描 1 条朋友圈并 push info/warn 日志，进度达 100 后置 status=completed 并 push success 日志
+- 新建 `src/app/api/waos/moments/route.ts`（约 175 行）：8 个 actions（login/logout/get_posts/get_comments/patrol/patrol_status/reply_comment/like_post/post_moment）+ GET 状态返回（service/loggedIn/postCount/commentCount/highIntentCount/patrol 概要/actions 列表/前 6 条朋友圈）；runtime='nodejs', dynamic='force-dynamic'；try-catch 双层错误兜底
+- 新建 `src/components/waos/MomentsPanel.tsx`（约 870 行）：完整 React 组件，shadcn/ui + Framer Motion
+  * 顶部状态栏：巡视状态指示（待命/巡视中/已暂停/已完成四态彩点）+ Progress 进度条 + 启动巡视/暂停/恢复按钮 + 发朋友圈按钮
+  * 三宫格统计：已扫描 N / 新评论 N / 高意向 N
+  * 朋友圈列表（max-h-[calc(100vh-340px)] overflow-y-auto waos-scrollbar）：每条卡片含头像/作者/我or好友标签/内容/图片网格/时间/点赞数/评论数/高意向&待回徽标
+  * 评论展开后显示评论列表：每条评论带 HOT/WARM/COLD 三色 Badge + 意向分数字 + 意向原因 + 回复按钮 + AI 回复预览（emerald 高亮）
+  * 回复输入框 Framer Motion 高度展开动画 + Enter 提交
+  * 底部巡视日志 Collapsible：时间线展示 logs（info 蓝 / warn 黄 / success 绿），Framer Motion 淡入
+  * 发朋友圈 Dialog：内容 Textarea（500 字限制 + 字数统计）+ 图片 URL Input（最多 9 张 + 缩略图网格 + 删除按钮 + 占位虚线框）
+- 修改 `src/components/waos/WeChatClient.tsx`：删除旧 MomentsLayout 函数（558-600 行）+ 旧 MomentPost helper（602-671 行），navTab === 'moments' 时挂载 `<MomentsPanel />`；保留 store 层 moments/refreshMoments 字段不破坏初始化流程；移除未使用的 MomentPostType/CommentType 类型别名
+- 重写 `electron/preloads/wechat-preload.js`（22 → 约 470 行）：追加朋友圈 DOM 监听 + 注入 + 防封
+  * 多套 DOM 选择器兜底（postSelectors/commentItemSelectors/authorSelectors/imageWrapperSelectors/likeButtonSelectors/commentInputSelectors/sendButtonSelectors）
+  * extractPost 提取动态 + extractComment 提取评论 + calcIntentLocal 本地意向分计算（与 connector.ts 算法对齐，避免 IPC 往返）
+  * injectReplyButton 在每条评论后注入翠绿色"旺财回复"按钮
+  * MutationObserver + 路由切换兜底扫描（1500ms 轮询）
+  * 暴露 `window.wangcaiMoments` API（start/stop/onEvent/getPosts/getComments/scan/replyComment/likePost/postMoment/isOnMomentsPage）
+  * replyComment/likePost/postMoment 全部 sleep 2-4s 随机防封
+  * 兼容旧 API `__wangcai` / `__wangcaiEvent` / `__wangcaiSetCallback`
+- 运行 `bun run lint`：0 errors, 4 warnings（全部为既存无关警告：BrainSettings/Splashscreen/TopBar 的 Unused eslint-disable，与本次改动无关）
+- curl 实测全部 8 个 action：
+  * GET 返回 6 朋友圈 / 16 评论 / 9 高意向
+  * patrol 启动后 1s 时 progress=33% scanned=2 newComments=7 highIntent=5（含 2 条 warn 日志）
+  * patrol 4s 后 status=completed progress=100% scanned=6 newComments=16 highIntent=9 + 8 条日志（含 1 条 success 完成日志）
+  * reply_comment 后 mc1 replyStatus=replied + aiReply 字段写入"陈先生您好，GLC目前优惠5万..."
+  * like_post mp2 返回 success
+  * post_moment 后 get_posts 返回 7 条，新 post "【限时优惠】本周下单GLC立享3年0利率..." 在最前
+
+Stage Summary:
+- 产出文件清单：
+  * `src/lib/moments/connector.ts`（约 490 行，新建）
+  * `src/app/api/waos/moments/route.ts`（约 175 行，新建）
+  * `src/components/waos/MomentsPanel.tsx`（约 870 行，新建）
+  * `src/components/waos/WeChatClient.tsx`（-120 / +5 行，移除旧 stub 挂载新组件）
+  * `electron/preloads/wechat-preload.js`（22 → 约 470 行，重写）
+  * `agent-ctx/P1-full-stack-developer.md`（工作记录）
+  * 合计约 2000 行新业务代码
+- 关键决策：
+  1. 意向分算法与视频号/抖音完全对齐（询价+30/试驾+25/好感+10/负面-10），跨场控面板可横向比较
+  2. patrol 后台 setInterval 推进 + 前端 800ms 轮询，巡视完成后自动 refreshAll
+  3. 暂停采用客户端停止轮询策略，避免在 Connector 接口增加 pausePatrol 方法
+  4. 图片 URL 输入最多 9 张（与微信原生限制对齐），Dialog 实时缩略图预览
+  5. 评论分 HOT/WARM/COLD 三色 Badge，与销售场景"高意向优先截流"策略对齐
+  6. 保留 store 层旧 moments/refreshMoments 字段不破坏初始化流程
+  7. preload 防封 2-4s 随机延迟，避免固定间隔被反作弊识别
+  8. 所有 Promise 加 10s 超时保护
+- WAOS-X 模块9 补齐情况：朋友圈场控面板 UI 框架 ✅ + 朋友圈巡视进度示例展示 ✅
+- 后续可消费点：
+  * 接入真实朋友圈时只需替换 MomentsConnector 实现（接口稳定）
+  * `window.wangcaiMoments` API 可被渲染进程直接调用，无需 IPC 往返
+  * 评论的 aiReply 字段可对接 AI 大脑 API 自动生成回复
+
+---
+Task ID: P4-P5
+Agent: full-stack-developer
+Task: CRM表格version列 + 动态线索表单4字段
+
+Work Log:
+- 前置阅读：worklog.md / ProDrawer.tsx（11 tab + 6 大模块面板）/ DecisionPanel.tsx（8 子组件含 SalesCopilot）/ useOpsStore.ts Lead 接口（无 version 字段）/ prisma/schema.prisma Lead model（有 version 字段，store 层未对齐）
+- useOpsStore 改动 1（Lead 接口扩展）：
+  * 新增 LeadForm 接口（carModel/budgetRange/emotionState/familyStatus 4 字段）并 export
+  * Lead 接口加 `version: number` 必填字段 + `leadForm?: LeadForm` 可选字段
+  * 6 条 SEED_LEADS 全部补齐 version（L001=3/L002=1/L003=2/L004=1/L005=1/L006=5）+ leadForm
+- useOpsStore 改动 2（testOptimisticLock 方法）：
+  * 签名：`(leadId) => Promise<{ success, conflict, message, oldVersion, newVersion }>`
+  * 350ms 模拟 IO 延迟 → 读 lead → version=1 推进 stage + version+1（成功）；version>1 模拟 v-1 过期更新（冲突，不修改字段）
+  * stage 推进顺序：new → engaged → qualified → hot → converted；warm/cold 兜底
+  * 每次写审计日志（crm.optimistic_lock.success/conflict）+ EventBus emitLogMsg + emitUpdateLeads
+- useOpsStore 改动 3（updateLeadForm 方法）：
+  * 签名：`(leadId, partial: Partial<LeadForm>) => void`
+  * 合并旧 leadForm + partial → 写回 + version+1（每次编辑视为一次乐观写）
+  * 审计日志（crm.lead_form.update）+ EventBus 信号
+- ProDrawer 改动 4（CRM tab + CrmPanel）：
+  * Panel type 加 'crm'，TABS 加 { id:'crm', label:'CRM 线索', icon:Database, module:'8', desc:'线索表 + 乐观锁' }
+  * 路由 {panel === 'crm' && <CrmPanel />}
+  * CrmPanel：ModuleIntro 模块8 + shadcn Table 5 列（姓名/意向分/价值分/状态/版本号）
+  * 行可点击选中（高亮 + selectLead 联动），version 列用 Badge 颜色递增（v1 灰/v2 蓝/v3 绿/v4+ 橙）
+  * 新增 VersionBadge/ScoreBadge/StageBadge 3 helper 组件
+  * 乐观锁测试按钮（Loader2 spinner + Zap icon，disabled 保护）+ 红/绿冲突成功提示
+- DecisionPanel 改动 5（LeadFormSection 4 字段）：
+  * 插入 SalesCopilot 与 Predictions 之间，用 key={lead.id} 强制 remount 避免跨线索状态残留
+  * 意向车型 Select（10 选项）+ Car icon
+  * 预算范围 Select（5 选项）+ Wallet icon
+  * 情绪状态 Slider 0-100 + emoji 指示（😡/😠/😐/🙂/🤩）+ Smile icon + 底部 3 emoji 锚点
+  * 家庭情况 Select（5 选项）+ Home icon
+  * onValueChange 只更新本地视觉，onValueCommit 才提交 store + 触发闪烁（避免拖动产生多次 version+1）
+- DecisionPanel 改动 6（Framer Motion 绿色高亮闪烁）：
+  * 每字段 motion.div 包裹，animate 控制 backgroundColor
+  * flash 状态用 Record<keyof LeadForm, number>（时间戳）追踪每字段独立闪烁
+  * 动画：emerald/30 → emerald/10 → emerald/30 → transparent，2 秒，4 关键帧 easeInOut
+  * 2 秒后 setTimeout 自动清零，ref 管理 timer 避免竞态
+  * 卸载时 cleanup-only useEffect 清理 timer（无 setState，规避 react-hooks/set-state-in-effect 反模式）
+- 验证：
+  * bun run lint：0 errors, 4 warnings（全为既存无关警告：BrainSettings/Splashscreen/TopBar 的 Unused eslint-disable）
+  * npx tsc --noEmit：本次新增代码 0 TS 错误（22 个总数全为前序 Task 遗留：route.ts Prisma 类型/WeChatClient unknown/LeadJourney+store createdAt undefined，与本次改动无关）
+  * curl http://localhost:3000/：HTTP 200 (0.36s)
+  * dev.log：✓ Compiled in 230ms + GET / 200 正常
+
+Stage Summary:
+- 改动文件清单：
+  * `src/store/useOpsStore.ts`（3118→3285 行，+167 行）：Lead 接口加 version + leadForm + LeadForm 导出 + 6 SEED_LEADS 补齐 + testOptimisticLock + updateLeadForm 2 方法
+  * `src/components/waos/ProDrawer.tsx`（959→1170 行，+211 行）：CRM tab + CrmPanel + VersionBadge/ScoreBadge/StageBadge 3 helper
+  * `src/components/waos/DecisionPanel.tsx`（858→1086 行，+228 行）：LeadFormSection 4 字段 + Framer Motion 绿色闪烁 + Select/Slider/Label 导入 + emotionEmoji/Label helper + key remount
+  * `agent-ctx/P4-P5-full-stack-developer.md`（新建工作记录）
+  * 合计 +606 行新业务代码
+- 关键决策：
+  1. version 在 Lead 接口为必填，与 Prisma schema 对齐，6 种子补齐避免防御式 ?? 1 写法
+  2. 乐观锁语义：v1 直接成功推进 stage，v2+ 模拟 v-1 过期更新失败（与 Prisma `where:{id,version}` 命中 0 行的真实语义对齐）
+  3. LeadFormSection 用 key={lead.id} remount 而非 useEffect 同步状态，规避 React 19 set-state-in-effect 反模式
+  4. Slider 用 onValueCommit 而非 onValueChange 提交，单次拖动只产生 1 次 version+1
+  5. 闪烁动画 4 关键帧（emerald/30→10→30→transparent），模拟"闪烁"中点变暗再亮起再淡出
+  6. version Badge 颜色递增 v1 灰/v2 蓝/v3 绿/v4+ 橙，运营一眼看出哪些线索被频繁操作
+  7. 审计日志 traceId 前缀 olk_/lf_ 与既有格式一致，便于 AuditPanel 筛选
+  8. EventBus 严格按既有签名调用（emitLogMsg(level,message) / emitUpdateLeads() 无参），未破坏接口
+- WAOS-X 模块7/8 补齐情况：
+  * 模块8 CRM 表格 5 列含 version ✅ + 乐观锁测试按钮 ✅ + 冲突日志提示 ✅
+  * 模块7 动态线索表单 4 字段（意向/预算/情绪/家庭）✅ + 修改后 2 秒绿色高亮闪烁 ✅
+- 后续可消费点：
+  * useOpsStore.testOptimisticLock 可被 InfraPanel"分布式锁"section 调用做演示
+  * useOpsStore.updateLeadForm 可被未来 AI 自动填表功能调用（LLM 推断车型/预算/情绪/家庭后自动写入）
+  * Lead.version 与 Prisma schema 对齐，接入真实数据库时 ORM 层无需改造
+  * LeadFormSection 4 字段值可被 SalesCopilot 用于策略选择（如预算 30 万以下 → 推 C 级话术）

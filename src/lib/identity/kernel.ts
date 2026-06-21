@@ -58,13 +58,37 @@ export function inferDelta(message: string): Partial<IdentityVector> {
 
 export function compilePersona(identity: IdentityVector, personas: any[]): PersonaBlend {
   const { trust, intent, emotion, urgency, resistance, value } = identity
+
+  // ─── 动态乘数系统（对齐 WAOS-X 模块1: 商业价值评估）─────────
+  // 根据身份向量动态计算乘数，影响人设评分权重
+  // urgencyBoost: 紧迫度>70 时所有策略加成 1.3×（客户要跑了，加紧）
+  // valueBoost: 价值>70 时 BD/销售类人设加成 1.2×（高价值客户优先服务）
+  // riskPenalty: 抗拒>60 或 情绪<30 时风险罚分 0.7×（避免激进人设）
+  // trustBoost: 信任>70 时销售类加成 1.15×（已建立信任，可推进）
+  const multipliers = {
+    urgency: urgency > 70 ? 1.3 : urgency > 50 ? 1.1 : 1.0,
+    value: value > 70 ? 1.2 : value > 50 ? 1.05 : 1.0,
+    risk: (resistance > 60 || emotion < 30) ? 0.7 : 1.0,
+    trust: trust > 70 ? 1.15 : trust > 50 ? 1.05 : 1.0,
+  }
+
   const scores = personas.map(p => {
     let score = 0
-    if (p.role === 'sales' && p.id !== 'closer' && intent > 60 && trust > 50) { score = intent * 0.8 + trust * 0.2 }
-    else if (p.role === 'sales' && p.id === 'closer' && intent > 70 && resistance > 50) { score = intent * 0.6 + resistance * 0.3 }
-    else if (p.role === 'service' && (emotion < 40 || resistance > 60)) { score = (100 - emotion) * 0.5 + resistance * 0.3 + 30 }
-    else if (p.role === 'bd' && value < 50) { score = (100 - value) * 0.4 + 40 }
-    else if (p.role === 'marketing' && intent < 40) { score = (100 - intent) * 0.3 + 30 }
+    if (p.role === 'sales' && p.id !== 'closer' && intent > 60 && trust > 50) {
+      score = (intent * 0.8 + trust * 0.2) * multipliers.trust * multipliers.urgency
+    }
+    else if (p.role === 'sales' && p.id === 'closer' && intent > 70 && resistance > 50) {
+      score = (intent * 0.6 + resistance * 0.3) * multipliers.value * multipliers.risk
+    }
+    else if (p.role === 'service' && (emotion < 40 || resistance > 60)) {
+      score = ((100 - emotion) * 0.5 + resistance * 0.3 + 30) * multipliers.risk
+    }
+    else if (p.role === 'bd' && value < 50) {
+      score = ((100 - value) * 0.4 + 40) * multipliers.value
+    }
+    else if (p.role === 'marketing' && intent < 40) {
+      score = ((100 - intent) * 0.3 + 30) * multipliers.urgency
+    }
     else { score = 30 }
     return { persona: p, score }
   })
@@ -78,14 +102,30 @@ export function compilePersona(identity: IdentityVector, personas: any[]): Perso
     speed: urgency > 70 ? 'fast' as const : urgency > 40 ? 'medium' as const : 'slow' as const,
     emojiLevel: Math.round(blends.reduce((sum, b) => { const p = personas.find(p => p.id === b.personaId); return sum + ((p as any)?.tone?.emojiLevel || 2) * b.weight / 100 }, 0)),
   }
+
+  // 动态乘数影响策略选择（紧迫度高时倾向逼单，风险高时倾向安抚）
   let strategy = '理解需求，温和推荐'
-  if (intent > 70 && trust > 60) strategy = '推进试驾邀约，锁定意向'
+  if (intent > 70 && trust > 60 && multipliers.urgency > 1.1) strategy = '紧迫推进试驾邀约，锁定意向（高紧迫乘数）'
+  else if (intent > 70 && trust > 60) strategy = '推进试驾邀约，锁定意向'
   else if (intent > 70 && resistance > 50) strategy = '限时优惠+现车稀缺促单'
+  else if (emotion < 30 && multipliers.risk < 1) strategy = '情绪安抚+售后关怀（高风险罚分）'
   else if (emotion < 30) strategy = '情绪安抚+售后关怀'
+  else if (value < 40 && multipliers.value < 1.1) strategy = '价值重塑+竞品对比（低价值乘数）'
   else if (value < 40) strategy = '价值重塑+竞品对比'
   else if (intent < 30) strategy = '内容种草+长期培育'
   const confidence = Math.min(0.95, (topK[0]?.score || 0) / 100)
   return { blends, compiled, strategy, confidence }
+}
+
+// ─── 动态乘数导出（供 UI 展示 + 仪表盘）────────────────────
+export function getMultipliers(identity: IdentityVector) {
+  const { trust, intent, emotion, urgency, resistance, value } = identity
+  return {
+    urgency: urgency > 70 ? 1.3 : urgency > 50 ? 1.1 : 1.0,
+    value: value > 70 ? 1.2 : value > 50 ? 1.05 : 1.0,
+    risk: (resistance > 60 || emotion < 30) ? 0.7 : 1.0,
+    trust: trust > 70 ? 1.15 : trust > 50 ? 1.05 : 1.0,
+  }
 }
 
 export function fastRuleEngine(message: string): { handled: boolean; reply?: string; reason?: string } {
@@ -94,6 +134,70 @@ export function fastRuleEngine(message: string): { handled: boolean; reply?: str
   if (/保养|维修|售后/.test(message)) return { handled: true, reply: '您的爱车该保养了吗？我帮您查一下保养周期并预约时间~', reason: 'fast_rule:maintenance' }
   if (/^(你好|您好|hi|hello|在吗|在不在)/i.test(message.trim())) return { handled: true, reply: '您好！欢迎咨询~请问有什么可以帮您的？', reason: 'fast_rule:greeting' }
   return { handled: false }
+}
+
+// ─── 纯模板驱动话术库（对齐 WAOS-X 模块1: AI话术生成模板驱动）─────────
+// 4 策略 × 多场景模板，不调用 LLM，0ms 返回，用于 Multi-Speed Pipeline 快速通道
+export interface ReplyTemplate {
+  strategy: StrategyType
+  intent: IntentType
+  personaRole?: string  // 可选：限定人设角色
+  template: string      // 话术模板，支持 {车型} {客户姓} 占位符
+  description: string
+}
+
+export const REPLY_TEMPLATES: ReplyTemplate[] = [
+  // ─── CLOSE_NOW 强成交策略（意向高+信任高）─────────
+  { strategy: 'CLOSE_NOW', intent: 'PRICE', template: '{客户姓}哥/姐，这款{车型}现在正好有现车，我这周刚成交两台同款，价格我能帮您申请到不错的优惠，要不您今天过来一趟？', description: '现车稀缺+成交背书+邀约到店' },
+  { strategy: 'CLOSE_NOW', intent: 'PRICE', personaRole: 'sales', template: '哥，{车型}这周还有1台现车，明天不来可能就被订走了。我现在就帮您锁车，您带身份证过来就行。', description: '逼单+锁车+明确动作' },
+  { strategy: 'CLOSE_NOW', intent: 'GENERAL', template: '您看了一阵子了，要不这样，我帮您约个试驾，开过之后您再做决定，试驾不买也没关系的~', description: '试驾转化+降低心理门槛' },
+
+  // ─── SOFT_RECOVERY 软挽回策略（抗拒/情绪低）─────────
+  { strategy: 'SOFT_RECOVERY', intent: 'REJECTION', template: '理解您的顾虑，买车确实要慎重。要不我先给您发份详细的配置单和金融方案，您慢慢看，有疑问随时找我，我24小时在线。', description: '共情+提供资料+保持联系' },
+  { strategy: 'SOFT_RECOVERY', intent: 'REJECTION', personaRole: 'service', template: '哥，价格方面我也很为难，不过我可以帮您算算综合用车成本，奔驰的保值率和售后真的不一样，您给我5分钟我详细说说？', description: '价值重塑+请求时间' },
+  { strategy: 'SOFT_RECOVERY', intent: 'GENERAL', template: '没关系的，您再考虑考虑。不过有个好消息我得先告诉您，下个月厂家可能要调价，现在订其实最划算。', description: '尊重决定+制造紧迫' },
+
+  // ─── RECONNECT_HOOK 唤醒钩子策略（沉睡客户）─────────
+  { strategy: 'RECONNECT_HOOK', intent: 'SILENCE_BREAK', template: '{客户姓}哥好久不见！您之前关注的{车型}最近刚出了2024新款，配置升级了不少，价格反而更友好，要不要我给您发几张实拍图？', description: '老客户问候+新款吸引+图片诱饵' },
+  { strategy: 'RECONNECT_HOOK', intent: 'SILENCE_BREAK', personaRole: 'service', template: '哥，您爱车该做小保养了吧？最近店里有免费检测活动，顺便我给您看看新款，不买也来看看。', description: '保养钩子+免费诱饵+低压力' },
+  { strategy: 'RECONNECT_HOOK', intent: 'GENERAL', template: '哥好久没联系了，最近奔驰有个老客户专享活动，置换补贴很给力，您有兴趣了解下吗？', description: '老客户专享+置换诱饵' },
+
+  // ─── STANDARD_REPLY 标准回复策略（通用兜底）─────────
+  { strategy: 'STANDARD_REPLY', intent: 'PRICE', template: '您好！{车型}的价格区间比较广，具体要看配置和颜色，我加您微信发详细报价单给您？', description: '区间+配置+加微信转化' },
+  { strategy: 'STANDARD_REPLY', intent: 'GENERAL', template: '您好！欢迎咨询~请问您关注的是哪款车型？C级/GLC/GLE/E级/S级我都能帮您详细介绍~', description: '欢迎+车型引导' },
+  { strategy: 'STANDARD_REPLY', intent: 'GENERAL', personaRole: 'marketing', template: '感谢关注！您可以先看看我们的视频号内容，里面有各车型的详细评测，有感兴趣的我帮您一对一介绍~', description: '内容引流+一对一转化' },
+]
+
+// 模板匹配函数：根据策略+意图+人设角色选模板，填充占位符
+export function matchTemplate(
+  strategy: StrategyType,
+  intent: IntentType,
+  personaRole?: string,
+  placeholders: { 车型?: string; 客户姓?: string } = {}
+): { found: boolean; reply?: string; template?: ReplyTemplate } {
+  // 优先匹配：strategy + intent + personaRole
+  let candidates = REPLY_TEMPLATES.filter(t =>
+    t.strategy === strategy && t.intent === intent && t.personaRole === personaRole
+  )
+  // 退化：strategy + intent（不限人设）
+  if (candidates.length === 0) {
+    candidates = REPLY_TEMPLATES.filter(t => t.strategy === strategy && t.intent === intent)
+  }
+  // 再退化：strategy + GENERAL
+  if (candidates.length === 0) {
+    candidates = REPLY_TEMPLATES.filter(t => t.strategy === strategy && t.intent === 'GENERAL')
+  }
+  if (candidates.length === 0) return { found: false }
+
+  // 随机选一个（避免每次相同）
+  const tpl = candidates[Math.floor(Math.random() * candidates.length)]
+  let reply = tpl.template
+  // 填充占位符
+  if (placeholders.车型) reply = reply.replace(/\{车型\}/g, placeholders.车型)
+  if (placeholders.客户姓) reply = reply.replace(/\{客户姓\}/g, placeholders.客户姓)
+  // 清理未填充的占位符
+  reply = reply.replace(/\{车型\}/g, '这款车型').replace(/\{客户姓\}/g, '')
+  return { found: true, reply, template: tpl }
 }
 
 export interface ActionStep { op: 'wait' | 'focus' | 'type' | 'send' | 'read' | 'screenshot'; target?: string; text?: string; ms?: number }

@@ -1,13 +1,19 @@
 'use client'
 
-import { useOpsStore } from '@/store/useOpsStore'
+import { useOpsStore, type LeadForm } from '@/store/useOpsStore'
 import {
   Sparkles, Flame, TrendingUp, Clock, Tag, ChevronRight,
   MessageSquare, ArrowUpRight, Hand, CheckCircle2, Bot, User, Shield,
-  Star, Zap, Eye, AlertTriangle, Cpu, Loader2,
+  Star, Zap, Eye, AlertTriangle, Cpu, Loader2, Car, Wallet, Smile, Home,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import { Slider } from '@/components/ui/slider'
+import { Label } from '@/components/ui/label'
 
 export function DecisionPanel() {
   const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
@@ -29,6 +35,9 @@ export function DecisionPanel() {
 
         {/* SalesCopilot (AI 副驾 4字段) */}
         <SalesCopilot />
+
+        {/* 动态线索表单 4 字段（模块7） */}
+        <LeadFormSection key={lead.id} />
 
         {/* 成交/流失预测 */}
         <Predictions />
@@ -201,6 +210,225 @@ function SalesCopilot() {
           <span>推荐案例: {copilot.recommendedCase}</span>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── 动态线索表单 4 字段（模块7）──────────────────────────────
+// 字段：意向车型 / 预算范围 / 情绪状态 / 家庭情况
+// 修改后 2 秒内字段背景绿色高亮闪烁，2 秒后恢复
+const CAR_MODELS = ['C级', 'GLC', 'GLE', 'E级', 'S级', 'GLC Coupe', 'EQE', '迈巴赫', 'AMG', '其他']
+const BUDGET_RANGES = ['30万以下', '30-50万', '50-80万', '80-120万', '120万以上']
+const FAMILY_STATUS = ['单身', '情侣', '小家庭三口', '二孩家庭', '三代同堂']
+
+// 情绪状态 emoji：0=愤怒 / 50=平静 / 100=兴奋
+function emotionEmoji(v: number): string {
+  if (v < 20) return '😡'  // 愤怒
+  if (v < 40) return '😠'  // 不满
+  if (v < 60) return '😐'  // 平静
+  if (v < 80) return '🙂'  // 满意
+  return '🤩'  // 兴奋
+}
+function emotionLabel(v: number): string {
+  if (v < 20) return '愤怒'
+  if (v < 40) return '不满'
+  if (v < 60) return '平静'
+  if (v < 80) return '满意'
+  return '兴奋'
+}
+
+function LeadFormSection() {
+  const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
+  const updateLeadForm = useOpsStore(s => s.updateLeadForm)
+
+  // 字段闪烁控制：每个字段记录一个时间戳，2 秒内显示绿色高亮
+  // 用 ref + state 双轨：ref 立即写入、state 触发渲染
+  // 注：父组件用 key={lead.id} 强制切换线索时 remount，所以这里 useState 初始化即可，
+  //     不需要 useEffect 同步外部 prop 变化（避免 setState-in-effect 反模式）。
+  const [flash, setFlash] = useState<{ carModel: number; budgetRange: number; emotionState: number; familyStatus: number }>({
+    carModel: 0, budgetRange: 0, emotionState: 0, familyStatus: 0,
+  })
+  const timersRef = useRef<Record<keyof LeadForm, ReturnType<typeof setTimeout> | null>>({
+    carModel: null, budgetRange: null, emotionState: null, familyStatus: null,
+  })
+
+  // 情绪 Slider 本地状态：拖动过程中只更新本地，松手时（onValueCommit）才提交到 store + 触发闪烁
+  // 避免拖动一次产生多次 version +1。初始化从当前 lead 读取（依赖 key remount）。
+  const [localEmotion, setLocalEmotion] = useState<number>(
+    () => lead?.leadForm?.emotionState ?? 50
+  )
+
+  // 卸载时清理所有未触发的定时器（cleanup-only，无 setState）
+  useEffect(() => {
+    return () => {
+      Object.values(timersRef.current).forEach(t => t && clearTimeout(t))
+      timersRef.current = { carModel: null, budgetRange: null, emotionState: null, familyStatus: null }
+    }
+  }, [])
+
+  if (!lead) return null
+
+  const form = lead.leadForm || {}
+
+  // 触发某字段闪烁：写入当前时间戳，2 秒后清零
+  const triggerFlash = (key: keyof LeadForm) => {
+    const now = Date.now()
+    setFlash(prev => ({ ...prev, [key]: now }))
+    if (timersRef.current[key]) clearTimeout(timersRef.current[key]!)
+    timersRef.current[key] = setTimeout(() => {
+      setFlash(prev => ({ ...prev, [key]: 0 }))
+      timersRef.current[key] = null
+    }, 2000)
+  }
+
+  // 通用：更新某字段值并触发闪烁（用于 Select 类字段，每次都是一次完整提交）
+  const handleUpdate = (key: keyof LeadForm, value: string | number) => {
+    updateLeadForm(lead.id, { [key]: value } as Partial<LeadForm>)
+    triggerFlash(key)
+  }
+
+  // Slider 专用：拖动中只更新本地视觉；松手时提交到 store + 触发闪烁
+  const handleEmotionChange = (vals: number[]) => setLocalEmotion(vals[0])
+  const handleEmotionCommit = (vals: number[]) => {
+    // 只有值真正变化才提交（避免点击但不拖动也产生 +1）
+    if (vals[0] !== (form.emotionState ?? 50)) {
+      updateLeadForm(lead.id, { emotionState: vals[0] })
+      triggerFlash('emotionState')
+    }
+  }
+
+  // 闪烁动画配置：从 emerald/30 → emerald/10 → emerald/30 → transparent，2 秒
+  const flashTransition = {
+    backgroundColor: ['rgba(16,185,129,0.30)', 'rgba(16,185,129,0.10)', 'rgba(16,185,129,0.30)', 'rgba(16,185,129,0)'],
+    transition: { duration: 2, times: [0, 0.33, 0.66, 1], ease: 'easeInOut' as const },
+  }
+
+  return (
+    <div className="p-4 border-b border-border/60">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="w-5 h-5 rounded-md bg-amber-500/10 flex items-center justify-center">
+          <Tag className="w-3 h-3 text-amber-500" />
+        </div>
+        <h3 className="text-[12px] font-semibold">线索表单</h3>
+        <span className="text-[9px] text-muted-foreground">4 字段 · 实时回填</span>
+        <span className="text-[9px] font-mono text-muted-foreground ml-auto">v{lead.version}</span>
+      </div>
+
+      <div className="space-y-2.5">
+        {/* 意向车型 */}
+        <motion.div
+          className="rounded-lg p-2"
+          animate={flash.carModel ? flashTransition : { backgroundColor: 'rgba(0,0,0,0)' }}
+        >
+          <Label className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
+            <Car className="w-3 h-3" /> 意向车型
+          </Label>
+          <Select
+            value={form.carModel || ''}
+            onValueChange={v => handleUpdate('carModel', v)}
+          >
+            <SelectTrigger className="h-8 text-[11px] w-full" size="sm">
+              <SelectValue placeholder="选择意向车型…" />
+            </SelectTrigger>
+            <SelectContent>
+              {CAR_MODELS.map(m => (
+                <SelectItem key={m} value={m} className="text-[11px]">{m}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </motion.div>
+
+        {/* 预算范围 */}
+        <motion.div
+          className="rounded-lg p-2"
+          animate={flash.budgetRange ? flashTransition : { backgroundColor: 'rgba(0,0,0,0)' }}
+        >
+          <Label className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
+            <Wallet className="w-3 h-3" /> 预算范围
+          </Label>
+          <Select
+            value={form.budgetRange || ''}
+            onValueChange={v => handleUpdate('budgetRange', v)}
+          >
+            <SelectTrigger className="h-8 text-[11px] w-full" size="sm">
+              <SelectValue placeholder="选择预算范围…" />
+            </SelectTrigger>
+            <SelectContent>
+              {BUDGET_RANGES.map(b => (
+                <SelectItem key={b} value={b} className="text-[11px]">{b}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </motion.div>
+
+        {/* 情绪状态 Slider 0-100 + emoji */}
+        <motion.div
+          className="rounded-lg p-2"
+          animate={flash.emotionState ? flashTransition : { backgroundColor: 'rgba(0,0,0,0)' }}
+        >
+          <div className="flex items-center justify-between mb-1.5">
+            <Label className="text-[10px] text-muted-foreground flex items-center gap-1">
+              <Smile className="w-3 h-3" /> 情绪状态
+            </Label>
+            <span className="text-[11px] font-mono font-semibold tabular-nums">
+              <span className="mr-1">{emotionEmoji(localEmotion)}</span>
+              {localEmotion}
+              <span className="text-[9px] text-muted-foreground ml-1">{emotionLabel(localEmotion)}</span>
+            </span>
+          </div>
+          <Slider
+            value={[localEmotion]}
+            min={0}
+            max={100}
+            step={1}
+            onValueChange={handleEmotionChange}
+            onValueCommit={handleEmotionCommit}
+            className="w-full"
+          />
+          <div className="flex justify-between text-[9px] text-muted-foreground mt-1">
+            <span>😡 愤怒</span>
+            <span>😐 平静</span>
+            <span>🤩 兴奋</span>
+          </div>
+        </motion.div>
+
+        {/* 家庭情况 */}
+        <motion.div
+          className="rounded-lg p-2"
+          animate={flash.familyStatus ? flashTransition : { backgroundColor: 'rgba(0,0,0,0)' }}
+        >
+          <Label className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
+            <Home className="w-3 h-3" /> 家庭情况
+          </Label>
+          <Select
+            value={form.familyStatus || ''}
+            onValueChange={v => handleUpdate('familyStatus', v)}
+          >
+            <SelectTrigger className="h-8 text-[11px] w-full" size="sm">
+              <SelectValue placeholder="选择家庭情况…" />
+            </SelectTrigger>
+            <SelectContent>
+              {FAMILY_STATUS.map(f => (
+                <SelectItem key={f} value={f} className="text-[11px]">{f}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </motion.div>
+      </div>
+
+      <AnimatePresence>
+        {(flash.carModel || flash.budgetRange || flash.emotionState || flash.familyStatus) && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mt-2 flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 overflow-hidden"
+          >
+            <CheckCircle2 className="w-3 h-3" />
+            <span>已回填，版本号 +1 → v{lead.version}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

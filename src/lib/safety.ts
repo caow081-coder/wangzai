@@ -41,6 +41,26 @@ export const INJECTION_PATTERNS = [
 // ─── 价格承诺模式 ─────────────────────────────────────────────
 export const PRICE_PROMISE_PATTERN = /(\d+(\.\d+)?)\s*折|便宜\s*\d+\s*元|立减\s*\d+|打\s*\d+\s*折|保证\s*最低价|最低\s*价格/i
 
+// ─── 高危熔断关键词（对齐 WAOS-X 模块2: 降价/便宜/保证/送/最低价）─────────
+// 触发即红色拦截气泡 + 流程终止（比 BANNED_KEYWORDS 更严格，BANNED 是替换，HIGH_RISK 是直接拦截）
+export const HIGH_RISK_KEYWORDS = [
+  '降价', '降了多少', '跌价', '贬值',
+  '保证最低', '保底价', '底价', '裸车价',
+  '免费送', '白送', '送保险', '送保养', '送装潢', '赠送',
+  '全网最低', '全城最低', '比任何人都低',
+  '承诺', '保证优惠', '保证便宜',
+  '内部价', '员工价', '关系价', '走后门',
+]
+
+export function isHighRisk(input: string): boolean {
+  if (!input) return false
+  const normalized = normalizeForCheck(input)
+  for (const word of HIGH_RISK_KEYWORDS) {
+    if (normalized.includes(word) || input.includes(word)) return true
+  }
+  return false
+}
+
 // ─── 归一化：防 Unicode/空白绕过 ─────────────────────────────
 /**
  * 将输入归一化以防止绕过：
@@ -63,12 +83,18 @@ export function normalizeForCheck(input: string): string {
 export interface SanitizeResult {
   ok: boolean
   reason?: string
-  layer?: 'injection' | 'banned' | 'price'
+  layer?: 'injection' | 'banned' | 'price' | 'high_risk'
 }
 
 export function sanitizeInput(rawInput: string): SanitizeResult {
   if (!rawInput) return { ok: true }
   const normalized = normalizeForCheck(rawInput)
+
+  // 第 0 层：高危熔断（最高优先级，对齐 WAOS-X 模块2）
+  if (isHighRisk(rawInput)) {
+    const matched = HIGH_RISK_KEYWORDS.find(w => normalized.includes(w) || rawInput.includes(w))
+    return { ok: false, reason: `高危熔断: ${matched}`, layer: 'high_risk' }
+  }
 
   // 第 1 层：Prompt 注入检测
   for (const p of INJECTION_PATTERNS) {
@@ -98,12 +124,23 @@ export interface FilterResult {
   safe: string
   filtered: boolean
   reason?: string
-  layer?: 'banned' | 'price'
+  layer?: 'banned' | 'price' | 'high_risk'
 }
 
 export function filterOutput(rawOutput: string): FilterResult {
   if (!rawOutput) return { safe: '', filtered: false }
   const normalized = normalizeForCheck(rawOutput)
+
+  // 第 0 层：高危熔断（AI 回复含"降价/保证最低/送保险"等，直接拦截）
+  if (isHighRisk(rawOutput)) {
+    const matched = HIGH_RISK_KEYWORDS.find(w => normalized.includes(w) || rawOutput.includes(w))
+    return {
+      safe: '【高危拦截】抱歉，这个问题我需要请主管亲自为您解答，请稍等。',
+      filtered: true,
+      reason: `高危词: ${matched}`,
+      layer: 'high_risk',
+    }
+  }
 
   // 第 1 层：违规关键词替换
   for (const word of BANNED_KEYWORDS) {

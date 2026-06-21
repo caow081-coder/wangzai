@@ -63,6 +63,14 @@ export interface LeadMessage {
   blockedReason?: string      // 拦截原因（用于气泡下方小字显示）
 }
 
+// 动态线索表单（模块7）—— 意向/预算/情绪/家庭 4 字段
+export interface LeadForm {
+  carModel?: string        // 意向车型：C级/GLC/GLE/E级/S级/GLC Coupe/EQE/迈巴赫/AMG/其他
+  budgetRange?: string     // 预算范围：30万以下/30-50万/50-80万/80-120万/120万以上
+  emotionState?: number    // 情绪状态 0-100（0=愤怒 / 50=平静 / 100=兴奋）
+  familyStatus?: string    // 家庭情况：单身/情侣/小家庭三口/二孩家庭/三代同堂
+}
+
 export interface Lead {
   id: string
   externalId: string
@@ -88,6 +96,10 @@ export interface Lead {
   variant?: string
   createdAt: string
   messages?: LeadMessage[]
+  // ─── 模块8: CRM 乐观锁版本号（与 Prisma Lead.version 对齐）──────────
+  version: number
+  // ─── 模块7: 动态线索表单 4 字段 ──────────────────────────────
+  leadForm?: LeadForm
 }
 
 export interface QueueItem {
@@ -669,6 +681,22 @@ interface OpsState {
   selectAllLeads: () => void
   clearSelection: () => void
   batchAction: (action: string) => void
+
+  // ─── 模块8: CRM 乐观锁测试 ──────────────────────────────────
+  // 模拟并发冲突：故意用旧 version 更新，返回冲突结果
+  // - 当前 version === 1：直接推进 stage + version → 2（成功）
+  // - 当前 version  >  1：用 version-1 模拟过期更新（失败/冲突）
+  testOptimisticLock: (leadId: string) => Promise<{
+    success: boolean
+    conflict: boolean
+    message: string
+    oldVersion: number
+    newVersion: number
+  }>
+
+  // ─── 模块7: 动态线索表单更新 ────────────────────────────────
+  // 局部更新 leadForm 4 字段（车型/预算/情绪/家庭），自动 +1 version
+  updateLeadForm: (leadId: string, partial: Partial<LeadForm>) => void
 }
 
 // ─── Socket singleton ─────────────────────────────────────────
@@ -707,6 +735,7 @@ const SEED_LEADS: Lead[] = [
     userName: '林晚秋', personaColor: '#10b981',
     intentScore: 88, valueScore: 72, priorityScore: 85, stage: 'hot',
     personaName: '顾问', lastMessage: '这个怎么卖？能便宜点吗？',
+    version: 3, leadForm: { carModel: 'GLC', budgetRange: '30-50万', emotionState: 65, familyStatus: '小家庭三口' },
     lastTouchAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
     unread: true, isSpam: false, alreadyCustomer: false,
     tags: ['high_intent', 'price_sensitive'],
@@ -723,6 +752,7 @@ const SEED_LEADS: Lead[] = [
     userName: '陈墨白', personaColor: '#f59e0b',
     intentScore: 65, valueScore: 50, priorityScore: 58, stage: 'warm',
     personaName: '客服', lastMessage: '已三连求链接！',
+    version: 1, leadForm: { carModel: 'C级', budgetRange: '30万以下', emotionState: 75, familyStatus: '单身' },
     lastTouchAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
     unread: false, isSpam: false, alreadyCustomer: false,
     tags: ['product_education'],
@@ -737,6 +767,7 @@ const SEED_LEADS: Lead[] = [
     userName: '苏念安', personaColor: '#8b5cf6',
     intentScore: 78, valueScore: 85, priorityScore: 80, stage: 'hot',
     personaName: '逼单', lastMessage: '请问有现货吗？',
+    version: 2, leadForm: { carModel: 'GLE', budgetRange: '50-80万', emotionState: 80, familyStatus: '小家庭三口' },
     lastTouchAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
     unread: true, isSpam: false, alreadyCustomer: false,
     tags: ['high_intent', 'high_value'],
@@ -751,6 +782,7 @@ const SEED_LEADS: Lead[] = [
     userName: '江月明', personaColor: '#ec4899',
     intentScore: 45, valueScore: 55, priorityScore: 48, stage: 'warm',
     personaName: '教授', lastMessage: '看了下还是有点贵',
+    version: 1, leadForm: { carModel: 'E级', budgetRange: '30-50万', emotionState: 40, familyStatus: '情侣' },
     lastTouchAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
     unread: false, isSpam: false, alreadyCustomer: false,
     tags: ['price_sensitive'],
@@ -765,6 +797,7 @@ const SEED_LEADS: Lead[] = [
     userName: '顾倾城', personaColor: '#06b6d4',
     intentScore: 30, valueScore: 35, priorityScore: 32, stage: 'cold',
     personaName: '宝妈', lastMessage: '朋友推荐过来的',
+    version: 1, leadForm: { carModel: 'EQE', budgetRange: '50-80万', emotionState: 70, familyStatus: '二孩家庭' },
     lastTouchAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
     unread: false, isSpam: false, alreadyCustomer: false,
     tags: ['referral'],
@@ -779,6 +812,7 @@ const SEED_LEADS: Lead[] = [
     userName: '沈听澜', personaColor: '#14b8a6',
     intentScore: 92, valueScore: 90, priorityScore: 91, stage: 'hot',
     personaName: '顾问', lastMessage: '已转账，请发货',
+    version: 5, leadForm: { carModel: 'S级', budgetRange: '120万以上', emotionState: 90, familyStatus: '三代同堂' },
     lastTouchAt: new Date(Date.now() - 60 * 1000).toISOString(),
     unread: true, isSpam: false, alreadyCustomer: true,
     tags: ['high_intent', 'converted', 'high_value'],
@@ -3032,6 +3066,139 @@ export const useOpsStore = create<OpsState>((set, get) => ({
 
     // Clear selection after batch action
     set({ selectedLeadIds: new Set<string>(), batchMode: false })
+  },
+
+  // ─── 模块8: CRM 乐观锁测试 ──────────────────────────────────
+  // 模拟并发冲突：故意用过期 version 去更新，应失败
+  testOptimisticLock: async (leadId) => {
+    // 模拟网络/磁盘 IO 延迟，让 UI 有"在处理中"的过渡感
+    await new Promise<void>(resolve => setTimeout(resolve, 350))
+
+    const lead = get().leads.find(l => l.id === leadId)
+    if (!lead) {
+      return {
+        success: false,
+        conflict: false,
+        message: `⚠️ 线索 ${leadId} 不存在`,
+        oldVersion: 0,
+        newVersion: 0,
+      }
+    }
+
+    const oldVersion = lead.version
+
+    // 当前 version === 1：直接推进 stage + version → 2（首次更新无冲突）
+    if (oldVersion === 1) {
+      // stage 推进：new → engaged → qualified → hot → converted
+      const stageProgression: Stage[] = ['new', 'engaged', 'qualified', 'hot', 'converted']
+      const curIdx = stageProgression.indexOf(lead.stage)
+      const nextStage: Stage =
+        curIdx >= 0 && curIdx < stageProgression.length - 1
+          ? stageProgression[curIdx + 1]
+          : lead.stage === 'warm' ? 'hot'
+            : lead.stage === 'cold' ? 'warm'
+              : lead.stage
+
+      const newVersion = oldVersion + 1
+      set({
+        leads: get().leads.map(l =>
+          l.id === leadId
+            ? { ...l, version: newVersion, stage: nextStage, lastTouchAt: new Date().toISOString() }
+            : l
+        ),
+      })
+
+      // 写审计日志 + EventBus 信号
+      const audit: AuditEntry = {
+        id: nextNotifId(),
+        leadId,
+        actor: 'operator',
+        action: 'crm.optimistic_lock.success',
+        from: `v${oldVersion}`,
+        to: `v${newVersion}`,
+        reason: `stage ${lead.stage}→${nextStage}`,
+        traceId: `olk_${Date.now()}`,
+        ts: Date.now(),
+      }
+      set({ auditLog: [audit, ...get().auditLog].slice(0, 500) })
+      getEventBus().emitLogMsg('info', `[CRM] 乐观锁更新成功 lead=${lead.userName} v${oldVersion}→v${newVersion}`)
+      getEventBus().emitUpdateLeads()
+
+      return {
+        success: true,
+        conflict: false,
+        message: `✅ 状态推进成功，版本号 v${oldVersion} → v${newVersion}`,
+        oldVersion,
+        newVersion,
+      }
+    }
+
+    // 当前 version > 1：模拟过期更新（用 version-1 去匹配，应失败）
+    // 真实场景下 Prisma 会用 `where: { id, version: expectedVersion }` 做条件更新，
+    // 命中 0 行即视为冲突；此处模拟同样的语义：不修改任何字段，直接返回冲突。
+    const staleVersion = oldVersion - 1
+    getEventBus().emitLogMsg(
+      'warn',
+      `[CRM] 乐观锁冲突 lead=${lead.userName} expected=v${staleVersion} actual=v${oldVersion}`
+    )
+    getEventBus().emitUpdateLeads()
+
+    const audit: AuditEntry = {
+      id: nextNotifId(),
+      leadId,
+      actor: 'operator',
+      action: 'crm.optimistic_lock.conflict',
+      from: `v${staleVersion}`,
+      to: `v${oldVersion}`,
+      reason: 'stale version rejected',
+      traceId: `olk_${Date.now()}`,
+      ts: Date.now(),
+    }
+    set({ auditLog: [audit, ...get().auditLog].slice(0, 500) })
+
+    return {
+      success: false,
+      conflict: true,
+      message: `⚠️ 乐观锁冲突：该线索已被其他操作修改，当前版本 v${oldVersion}，请刷新后重试`,
+      oldVersion: staleVersion,
+      newVersion: oldVersion,  // 未变更，仍为当前最新版本
+    }
+  },
+
+  // ─── 模块7: 动态线索表单更新 ────────────────────────────────
+  // 局部更新 leadForm 4 字段，自动 +1 version（每次编辑都视为一次乐观写）
+  updateLeadForm: (leadId, partial) => {
+    const lead = get().leads.find(l => l.id === leadId)
+    if (!lead) return
+
+    const oldVersion = lead.version
+    const newVersion = oldVersion + 1
+    const mergedForm: LeadForm = { ...(lead.leadForm || {}), ...partial }
+
+    set({
+      leads: get().leads.map(l =>
+        l.id === leadId
+          ? { ...l, leadForm: mergedForm, version: newVersion, lastTouchAt: new Date().toISOString() }
+          : l
+      ),
+    })
+
+    // 写审计日志 + EventBus 信号
+    const changedKeys = Object.keys(partial).join(',')
+    const audit: AuditEntry = {
+      id: nextNotifId(),
+      leadId,
+      actor: 'operator',
+      action: 'crm.lead_form.update',
+      from: `v${oldVersion}`,
+      to: `v${newVersion}`,
+      reason: `fields=${changedKeys}`,
+      traceId: `lf_${Date.now()}`,
+      ts: Date.now(),
+    }
+    set({ auditLog: [audit, ...get().auditLog].slice(0, 500) })
+    getEventBus().emitLogMsg('info', `[CRM] 线索表单更新 lead=${lead.userName} fields=${changedKeys} v${oldVersion}→v${newVersion}`)
+    getEventBus().emitUpdateLeads()
   },
 }))
 

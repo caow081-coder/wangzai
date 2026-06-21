@@ -1,6 +1,8 @@
 {
   "name": "wangcai-desktop",
   "version": "1.0.0",
+  "description": "旺财 WAOS - AI 私域营销助手，专为奔驰销售运营设计",
+  "author": "Wangcai WAOS",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
@@ -57,9 +59,7 @@
         }
       ],
       "icon": "electron/build/icon.png",
-      "artifactName": "旺财 Setup ${version}.${ext}",
-      "publisherName": "Wangcai WAOS",
-      "verifyUpdateCodeSignature": false
+      "artifactName": "旺财 Setup ${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,

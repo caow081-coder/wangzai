@@ -4,3 +4,6 @@ release/
 *.log
 *.AppImage
 *.tar.gz
+tool-results/
+tsconfig.tsbuildinfo
+*.tsbuildinfo

@@ -1054,3 +1054,36 @@ Stage Summary:
   8. 7 天趋势用 leads.createdAt 按天聚合，若种子数据时间集中则用 metricsHistory 末尾 7 个点兜底
   9. TOP 销售排行用 personas.cvr 排序，前 3 名加 🥇🥈🥉 emoji + 渐变背景，4-5 名纯数字排名
   10. 所有图表配色避开 indigo/blue，主色用 emerald/teal/cyan/amber/rose/purple，与项目既有 Charts.tsx 的配色体系一致
+
+---
+Task ID: 主轮次-RAG知识库+模板市场+数据看板+打包指南
+Agent: 主 Claude (全栈工程师)
+Task: RAG知识库升级 + 人设模板市场 + 数据看板 + Windows打包指南
+
+Work Log:
+- P1 RAG知识库升级(自做):
+  - KnowledgeDoc表(7字段+向量+命中次数)
+  - knowledge.ts: TF-IDF向量化 + 余弦相似度检索
+  - 16条奔驰种子(车型/金融/保养/试驾/竞品/FAQ)
+  - knowledge API: search/add/delete/init_seed/stats
+  - knowledgeSearchSkill升级: 调用真实RAG + 降级硬编码
+- P2 人设模板市场(派subagent,+508行):
+  - 8预设模板(5现有+3新增:新能源专员/性能车顾问/二手车评估师)
+  - 导入导出JSON + 分享码 + 复制人设
+- P3 数据看板(派subagent,+681行):
+  - 7图表: 转化漏斗/人设CVR/渠道分布/AI vs人工/SOP统计/7天趋势/TOP5
+  - Recharts + Framer Motion
+- P4 Windows打包指南(派subagent,+648行):
+  - copy-assets.js重写(5复制任务跨平台)
+  - build配置: asar:false + extraResources + 512图标 + NSIS中文
+  - docs/BUILD.md 8章节完整指南
+- 验证: lint 0 errors, RAG 16种子导入成功, next build成功
+- git push (commit 24b331b)
+
+Stage Summary:
+- RAG从硬编码升级为TF-IDF向量检索,16条奔驰知识种子
+- 人设模板市场: 8模板可导入导出分享
+- 数据看板: 7图表可视化转化漏斗+效果分析
+- Windows打包完整指南: docs/BUILD.md 648行
+- GitHub: commit 24b331b,本地远端同步
+- 下一阶段: Windows端打包exe验证 + 知识库管理UI + 更多Skill

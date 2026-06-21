@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Label } from '@/components/ui/label'
+// Phase 6: 工作台 SOP 触发器（运行按钮 + 实例状态卡片）
+import { SopRunButton, SopInstanceCard } from './SopRunner'
 
 export function DecisionPanel() {
   const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
@@ -33,6 +35,9 @@ export function DecisionPanel() {
             {/* 客户头部 */}
             <LeadHeader />
 
+            {/* SOP 执行状态卡片（Phase 6：紧跟客户信息，展示当前客户运行中的 SOP 实例）*/}
+            <SopInstanceCard />
+
         {/* SalesCopilot (AI 副驾 4字段) */}
         <SalesCopilot />
 
@@ -44,6 +49,11 @@ export function DecisionPanel() {
 
         {/* 快捷动作（提到前面）*/}
         <Actions />
+
+        {/* Phase 6: 运行 SOP 下拉按钮（紧跟快捷动作） */}
+        <div className="px-4 pb-4 -mt-2">
+          <SopRunButton />
+        </div>
 
         {/* 推荐话术（提到前面）*/}
         <ReplySuggestions />

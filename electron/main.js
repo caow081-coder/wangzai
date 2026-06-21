@@ -466,6 +466,12 @@ ipcMain.handle('destroy-platform-view', async (event, { platform }) => {
   return { success: true }
 })
 
+// IPC: 更新 BrowserView 边界（前端容器位置变化时调用）
+ipcMain.handle('update-view-bounds', async (event, { platform, bounds }) => {
+  uiActuation.resizeView(platform, bounds)
+  return { success: true }
+})
+
 // IPC: 显示/隐藏平台
 ipcMain.handle('show-platform-view', async (event, { platform, visible }) => {
   uiActuation.showView(platform, visible)

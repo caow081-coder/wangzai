@@ -5,13 +5,14 @@ import {
   MessageCircle, Camera, Users, Send, Smile, Plus, ChevronLeft, MoreVertical,
   Heart, MessageSquare, Shield, Loader2, Clock, Sparkles, Search, Phone, Video,
   PanelLeft, Image as ImageIcon, FileText, Scissors, ScreenShare, Folder,
-  ChevronRight, X, Zap, AlertTriangle,
+  ChevronRight, X, Zap, AlertTriangle, Monitor,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MomentsPanel } from '@/components/waos/MomentsPanel'
 import { SopPanel } from '@/components/waos/sop/SopPanel'
+import { useElectronBridge, PlatformEmbedView } from '@/hooks/waos/useElectronBridge'
 
 type NavTab = 'chat' | 'contacts' | 'moments' | 'intercept' | 'sop'
 
@@ -263,6 +264,9 @@ function ChatWindow() {
   const activePersonaId = useOpsStore(s => s.activePersonaId)
   const personas = useOpsStore(s => s.personas)
   const persona = personas.find(p => p.id === activePersonaId) || personas[0]
+  const { isDesktop, sendToPlatform } = useElectronBridge()
+  // 桌面端默认启用真实嵌入（初始值直接计算，避免 effect 内 setState）
+  const [embedMode, setEmbedMode] = useState(() => isDesktop)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -270,8 +274,20 @@ function ChatWindow() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [lead?.messages, typing])
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!draft.trim() || sending) return
+    // 桌面端嵌入模式：直接通过 IPC 发送到真实微信
+    if (embedMode && isDesktop) {
+      const r = await sendToPlatform('wechat', draft)
+      if (r.success) {
+        setClientDraft('')
+        toast.success('已发送到微信')
+      } else {
+        toast.error(`发送失败: ${r.error || '未知错误'}`)
+      }
+      return
+    }
+    // 网页端模拟：走 store 的 sendClientMessage
     sendClientMessage()
   }
 
@@ -283,6 +299,75 @@ function ChatWindow() {
   }
 
   if (!lead) return <EmptyChat />
+
+  // ─── 桌面端真实嵌入模式 ───
+  // Electron 环境下，用 BrowserView 嵌入真实微信网页版（wx.qq.com）
+  // 用户扫码登录后，左侧显示的是真实微信客户端，非模拟数据
+  if (embedMode && isDesktop) {
+    return (
+      <div className="flex flex-col h-full">
+        {/* 顶部工具栏 */}
+        <div className="h-9 shrink-0 bg-[#f5f5f5] dark:bg-[#1e1e1e] border-b border-black/5 dark:border-white/5 flex items-center px-3 gap-2">
+          <div className="flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <Monitor className="w-3 h-3" />
+            <span>真实微信嵌入</span>
+          </div>
+          <div className="flex-1" />
+          <button
+            onClick={() => setEmbedMode(false)}
+            className="text-[10px] px-2 py-0.5 rounded border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/10 text-[#7a7a7a] dark:text-[#9a9a9a]"
+            title="切换到模拟模式（调试用）"
+          >
+            模拟模式
+          </button>
+        </div>
+
+        {/* 真实微信 BrowserView 嵌入区 */}
+        <div className="flex-1 min-h-0 relative">
+          <PlatformEmbedView
+            platform="wechat"
+            active={true}
+            placeholder={
+              <div className="flex-1 flex items-center justify-center h-full">
+                <div className="text-center">
+                  <Loader2 className="w-6 h-6 animate-spin text-emerald-500 mx-auto mb-2" />
+                  <p className="text-[12px] text-muted-foreground">加载微信中…</p>
+                </div>
+              </div>
+            }
+          />
+        </div>
+
+        {/* 底部输入栏（桌面端：输入后通过 IPC 发送到真实微信）*/}
+        <div className="shrink-0 border-t border-black/5 dark:border-white/5 bg-white dark:bg-[#2a2a2a] p-2">
+          <div className="flex items-end gap-2">
+            <textarea
+              value={draft}
+              onChange={(e) => setClientDraft(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="输入消息，Enter 发送到真实微信…"
+              className="flex-1 px-3 py-2 text-[13px] bg-transparent resize-none focus:outline-none placeholder:text-[#b0b0b0] dark:text-white max-h-24"
+              rows={1}
+            />
+            <button
+              onClick={handleSend}
+              disabled={!draft.trim() || sending}
+              className="px-4 py-1.5 rounded bg-[#07C160] text-white text-[12px] hover:bg-[#06ad56] disabled:opacity-40 flex items-center gap-1"
+            >
+              {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+              发送
+            </button>
+          </div>
+          <p className="text-[9px] text-[#b0b0b0] dark:text-[#666] mt-1 px-1">
+            ⚠️ 消息将通过微信网页版真实发送，已启用防封延迟（2-4秒）+ 行为漂移检测
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // ─── 网页端模拟模式（默认）───
 
   return (
     <div className="flex flex-col h-full">
@@ -297,6 +382,16 @@ function ChatWindow() {
         <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"><Phone className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
         <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"><Video className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
         <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"><PanelLeft className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
+        {isDesktop && (
+          <button
+            onClick={() => setEmbedMode(true)}
+            className="ml-2 text-[10px] px-2 py-1 rounded bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 hover:bg-emerald-500/20 flex items-center gap-1"
+            title="切换到真实微信嵌入（Electron BrowserView）"
+          >
+            <Monitor className="w-3 h-3" />
+            真实嵌入
+          </button>
+        )}
       </div>
 
       {/* 推荐回复 chips */}

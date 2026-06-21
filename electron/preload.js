@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld('waosDesktop', {
   // 销毁平台视图
   destroyPlatformView: (platform) => ipcRenderer.invoke('destroy-platform-view', { platform }),
 
+  // 更新 BrowserView 边界（前端容器位置变化时调用）
+  updateViewBounds: (platform, bounds) => ipcRenderer.invoke('update-view-bounds', { platform, bounds }),
+
   // 显示/隐藏平台
   showPlatformView: (platform, visible) => ipcRenderer.invoke('show-platform-view', { platform, visible }),
 

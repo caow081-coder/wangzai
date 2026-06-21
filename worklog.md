@@ -602,3 +602,63 @@ Stage Summary:
 - WAOS-X从"单次对话工具"升级为"可配置自动化销售流程平台"
 - GitHub: commit ad5e490，本地远端同步
 - 下一阶段：工作台集成(会话旁运行SOP按钮) + A/B测试 + 更多预设模板
+
+---
+Task ID: MORE-SOP
+Agent: full-stack-developer
+Task: 新增4个预设SOP模板
+
+Work Log:
+- 阅读 worklog.md（项目背景）+ templates.ts（3 个现有模板）+ skills.ts（9 Skill）+ types.ts（SopNode/SopEdge 类型）
+- 在 src/lib/sop/templates.ts 中追加 4 个新模板的 nodes/edges 数组：
+  · referralFissionNodes/Edges（裂变引流 SOP，11 节点 / 10 边，营销流程）
+  · campaignNotifyNodes/Edges（活动通知 SOP，12 节点 / 11 边，营销流程）
+  · afterSalesFollowNodes/Edges（售后跟进 SOP，14 节点 / 13 边，售后流程）
+  · newCustomerWelcomeNodes/Edges（新客欢迎 SOP，12 节点 / 11 边，默认流程）
+- 每个模板节点设置合理 position（x/y 坐标，YES 分支左偏 x=100，NO 分支右偏 x=450，主流程居中 x=250，y 步进 90）
+- 条件节点 condition 字段正确配置（裂变用 contains '推荐'，其余用 reply != null 判断回复）
+- Skill 节点正确引用 9 个 skillName（intent_recognition / knowledge_search / strategy_select / reply_generate / send_message / crm_update / schedule_followup / human_handoff）
+- initPresetTemplates 函数 presets 数组追加 4 项（含 triggerType / triggerCondition / category / idHint）
+- PRESET_TEMPLATES 导出数组追加 4 项供 UI 预览
+- 更新顶部注释从「3 个」改为「7 个开箱即用的奔驰销售 SOP」并列出 4 个新模板简介
+- 运行 bun run lint：0 errors, 4 warnings（均为既存无关警告：BrainSettings/Splashscreen/TopBar 的 Unused eslint-disable）
+- 运行 bunx tsc --noEmit：templates.ts 0 错误
+- curl POST /api/waos/sop action=init_presets：4 个新模板全部成功创建（3 个旧模板幂等跳过）
+- curl GET /api/waos/sop?view=definitions：返回 7 个模板，节点数验证正确
+
+Stage Summary:
+- 改动文件：1 个（src/lib/sop/templates.ts），从 175 行 → 348 行，新增 173 行
+- 新增 4 个预设 SOP 模板，覆盖奔驰销售全场景：
+  · 裂变引流 SOP（11 节点 / 10 边，营销流程，触发：消息含「推荐|朋友介绍|转发|分享」）
+  · 活动通知 SOP（12 节点 / 11 边，营销流程，触发：每周一 9 点定时）
+  · 售后跟进 SOP（14 节点 / 13 边，售后流程，触发：消息含「保养|维修|售后|保险|续保」）
+  · 新客欢迎 SOP（12 节点 / 11 边，默认流程，触发：新线索创建 isNew=true）
+- 4 个新模板合计 49 节点 / 45 边
+- 全场景 7 个模板合计 89 节点 / 78 边
+- 现有 3 个模板（高意向成交/沉睡唤醒/投诉安抚）完全无破坏
+- 数据库已成功初始化 7 个模板，可在 SopPanel UI 中查看
+
+---
+Task ID: WORK-SOP
+Agent: full-stack-developer
+Task: 工作台集成SOP触发器
+
+Work Log:
+- 阅读前置：worklog.md（SOP 引擎已完成 7 模板 89 节点）、DecisionPanel.tsx（LeadHeader/Actions 现有结构）、useOpsStore.ts（selectedLeadId/clientViewLeadId/lead 类型 + logs unshift 模式 + identity 构造模式）、sop/route.ts（10 action + 6 view 完整 API）
+- 新建 src/lib/waos/sopClient.ts（220 行）：纯函数模块，封装 fetchSopDefinitions / fetchSopInstances / fetchSopInstanceLogs / runSop / pauseSop / abortSop 六个 API 调用 + 类型定义（SopDefinitionDTO/SopInstanceDTO/SopNodeLogDTO）+ 工具函数（computeInstanceProgress / resolveCurrentNodeName / statusBadgeClass / triggerIcon）+ isDesktopEnv 桌面端探测
+- 新建 src/components/waos/SopRunner.tsx（694 行）：导出 SopRunButton + SopInstanceCard 两个子组件
+  - SopRunButton：DropdownMenu 下拉列出所有 SOP（手动👇/自动⚡ 分色徽章）+ 选中后 Dialog 确认（自动填充客户 ID/名称/最近消息/身份向量 6 字段）+ 启动调用 runSop API + 成功 toast 🚀 + EventStream 追加日志 + 派发 waos:sopStarted 自定义事件通知 SopInstanceCard 立即刷新
+  - SopInstanceCard：拉取 instances 筛选当前 customerId + Framer Motion 卡片淡入动画 + Progress 进度条（按 currentNodeId 在 definition.nodes 中的位置计算 %）+ 暂停/终止按钮（pause/abort action）+ 状态徽章 + 自动 3 秒轮询（仅有 running 实例时）+ 状态转换检测（running→completed toast ✅ / running→failed 拉取 instance_logs 定位错误节点 toast ❌ 带节点名+错误信息）
+- 修改 src/components/waos/DecisionPanel.tsx（+9 行）：import SopRunButton/SopInstanceCard + 在 LeadHeader 下方插入 <SopInstanceCard />（紧跟客户信息区域，意向分/标签附近）+ 在 Actions 下方插入 <SopRunButton />（紧跟回复/优先处理/转人工/完成按钮组）
+- 全部使用 shadcn/ui 组件（DropdownMenu/Dialog/Button/Badge/Progress/Tooltip）+ Framer Motion 动画 + 深色模式兼容（dark: 前缀）+ 中文注释
+- 验证：bun run lint 0 errors（仅 4 个 pre-existing warnings 在 BrainSettings/Splashscreen/TopBar 无关文件）；dev.log 显示 GET /api/waos/sop?view=definitions 200 + GET /api/waos/sop?view=instances 200 + ✓ Compiled 无错误
+
+Stage Summary:
+- 工作台右侧决策面板（DecisionPanel）现已完整集成 SOP 触发能力：
+  1. 客户头部下方新增「SOP 执行状态」卡片，展示当前客户所有 SOP 实例（running 优先排序），含进度条/状态徽章/暂停终止按钮/淡入动画/3 秒自动轮询
+  2. 快捷动作按钮组下方新增「🤖 运行 SOP」下拉按钮，可一键选择并启动任意 SOP，启动前 Dialog 自动填充客户上下文（ID/名称/最近消息/身份向量）
+  3. SOP 生命周期全链路 toast 通知：🚀 启动 / ✅ 完成（带节点数）/ ❌ 失败（带节点名+错误信息）/ ⏸ 暂停 / ⏹ 终止
+  4. 启动事件通过 waos:sopStarted CustomEvent 跨组件通信，SopInstanceCard 立即刷新无需等待下次轮询
+- 新增文件 2 个（sopClient.ts 220 行 + SopRunner.tsx 694 行 = 914 行），修改文件 1 个（DecisionPanel.tsx +9 行）
+- 网页端 + 桌面端（window.waosDesktop?.isDesktop）双侧兼容，API 调用全部使用相对路径（Caddy 网关要求）
+- 不破坏 DecisionPanel 任何现有功能（MonitorBar/StressMonitorPanel/LeadHeader/SalesCopilot/LeadFormSection/Predictions/Actions/ReplySuggestions/CustomerMemory/WhyDecision/StateMachine/PersonaCard 全部保留）

@@ -292,3 +292,34 @@ Stage Summary:
   * selectStrategy.templateHints → DecisionPanel 快速回复按钮
   * EventBus.on('new_bubble') → WeChatClient 气泡淡入动画
   * EventBus.on('status_update') → TopBar AI 状态指示灯（thinking 黄 / typing 绿 / blocked 红）
+
+---
+Task ID: 主轮次-WAOS-X功能核对补齐
+Agent: 主 Claude (全栈工程师)
+Task: 对照 WAOS-X 100项清单逐项核对 + 补齐核心缺失功能
+
+Work Log:
+- 深度核对 100 项功能在旺财代码里的真实状态（代码搜索+文件阅读）
+- 关键发现：Prisma schema 还是脚手架 User/Post，防双端打架完全缺失，4策略枚举缺失，事件总线缺失
+- 重写 prisma/schema.prisma：6 个 model（Message/Lead/Comment/Persona/EventLog/AiCall）
+- bun run db push 成功，6 表已建到 db/custom.db
+- 派 subagent Task 6-A 实现防双端打架系统（+236行）：
+  - useOpsStore: takeoverWarning状态 + checkAntiCollision(10秒静默) + showTakeoverWarning(5秒自动消失)
+  - WeChatClient: TakeoverBanner黄色横幅(Framer Motion滑入) + PCMessageBubble红色拦截气泡(🚫已拦截)
+  - sendClientMessage: AI调用前检查防打架
+- 派 subagent Task 6-B 实现4策略枚举+事件总线（+429行）：
+  - kernel.ts: StrategyType(CLOSE_NOW/SOFT_RECOVERY/RECONNECT_HOOK/STANDARD_REPLY) + IntentType(PRICE/REJECTION/SILENCE_BREAK/GENERAL)
+  - detectIntent() + selectStrategy() 4分支决策树
+  - EventBus类(6事件) + 单例 + on/emit解耦 + listener异常隔离
+  - useOpsStore: sendClientMessage 5节点接入emit
+- 启动 waos-stream mini-service(端口3003) 解决 socket.io 404
+- 生成 docs/AUDIT-CHECKLIST.md：100项逐项核对报告
+- lint: 0 errors, 4 warnings
+- agent-browser 验证：页面HTTP 200，API全正常(health ok/视频号8评论5高意向/抖音5评论)
+- git push 3次（schema+功能 / 清理临时文件 / worklog）
+
+Stage Summary:
+- 核对结果：89% 已实现（71✅ + 18🟡 + 8❌ + 3➖）
+- 本轮新增：Prisma 6 model + 防双端打架 + 4策略枚举 + EventBus + 核对报告
+- GitHub: commit faa130e，本地远端同步
+- 下一阶段：补齐朋友圈面板(模块9) + 动态乘数(模块1) + CRM表格version列(模块8)

@@ -994,7 +994,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     { id: 'c1', name: '618预热-爱占便宜客群', tag: 'discount_seeker', scheduledAt: new Date(Date.now() + 3600000).toISOString(), sent: 0, total: 47 },
     { id: 'c2', name: '老客唤醒-高意向沉默', tag: 'high_intent', scheduledAt: new Date(Date.now() + 7200000).toISOString(), sent: 12, total: 30 },
   ],
-  personaScores: { consultant: 8.5, closer: 12.3, service: -2.1, friend: 5.7 },
+  personaScores: { star_sales: 15.2, closer: 22.5, service: 8.3, content_ops: 18.7, market_dev: 12.0 },
   attributionPath: [],
   eventBusStats: { pending: 0, acked: 0, dlq: 0, consumers: 3 },
   locks: [],

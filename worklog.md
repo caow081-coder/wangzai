@@ -1538,3 +1538,57 @@ Stage Summary:
   6. 加固 Electron 安全：loginUrl 协议+域名白名单 + userIndex 严格校验
 - 50 年审计工程师 P0 建议：SOP wait 节点的 paused 机制需配套外部 cron 调度器（node-cron 或 BullMQ）
 - 报告位置：/home/z/my-project/docs/AUDIT-SYS.md
+
+---
+Task ID: 主轮次-全项目深度审计
+Agent: 主 Claude (50年审计工程师)
+Task: 从第一个代码到最后一行,前后端+UI+交互+风格颜色,深度审计压力测试
+
+Work Log:
+- P0 打包配置再确认:
+  - 修复 tsc 2错误(DashboardPanel/ProDrawer operator类型比较)
+  - next build成功 + electron-builder --dir 旺财.exe 222MB
+- P1 后端API深度审计(派subagent):
+  - 21 route逐个审核,发现65问题,修复24(含3致命)
+  - 致命1: brain/route LLM输出缺filterOutput(价格承诺会发给客户)
+  - 致命2: brain/proxy 外部fetch无超时(进程hang住)
+  - 致命3: sessionCookies Map无限增长(OOM)
+  - 14 route统一req.json() try-catch + 6 route接入SafetyShield
+- P2 前端组件深度审计(派subagent):
+  - 29组件逐个审核,发现20问题,修复7 P0
+  - WeChatClient/MiddlePanel/ProDrawer 移除as any类型断言
+  - ErrorBoundary重写(key强制remount+resetKey+fallback)
+  - NotificationsDrawer键盘可访问
+- P3 系统层深度审计(派subagent):
+  - 15文件(Electron 8+SOP 5+RAG 2),发现32问题,修复13严重
+  - SOP condition节点null比较bug(影响5/7模板)
+  - SOP wait节点>30s转paused(原直接跳过破坏流程)
+  - RAG ensureInitialized竞态 → initializingPromise
+  - RAG search N+1查询 → 批量findMany(N倍性能)
+  - Electron 6处资源泄漏(autoUpdater/BrowserView/stream/sandbox/ui-actuation/SOP并发)
+  - 3处安全加固(login-platform白名单/clickDM校验/preload sanitize)
+- P4 Store审计:
+  - 4526行,as any仅1处(优秀)
+  - 定时器connect/disconnect管理良好
+  - messages/notifications/commentQueue都有slice上限
+  - localStorage有try-catch
+- P5 UI风格颜色审计:
+  - 主色调emerald一致(260处emerald-500)
+  - 间距紧凑(p-1/p-2为主),圆角rounded-lg为主
+  - 字号text-[10px]为主(信息密度高)
+  - 12组件有dark:覆盖,5个ErrorBoundary
+  - img alt完整(3处都有alt)
+- P6 端到端压测: 27/27通过
+- lint: 0 errors 0 warnings
+- tsc src/: 0错误
+- git push (commit 9e64a96)
+
+Stage Summary:
+- 全项目深度审计完成: 21 API + 29组件 + 15系统文件 + 4526行Store
+- 发现117问题,修复44个(24 API + 7前端 + 13系统)
+- 3个致命问题修复(价格承诺泄漏/进程hang/OOM)
+- 6处资源泄漏修复
+- 3处安全加固
+- 打包验证通过: 旺财.exe 222MB
+- 4份审计报告: AUDIT-API.md(717行)+AUDIT-FE.md(655行)+AUDIT-SYS.md(350行)+AUDIT-STORE.md
+- GitHub: commit 9e64a96,本地远端同步

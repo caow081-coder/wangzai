@@ -5,10 +5,11 @@ import {
   MessageCircle, Camera, Users, Send, Smile, Plus, ChevronLeft, MoreVertical,
   Heart, MessageSquare, Shield, Loader2, Clock, Sparkles, Search, Phone, Video,
   PanelLeft, Image as ImageIcon, FileText, Scissors, ScreenShare, Folder,
-  ChevronRight, X, Zap,
+  ChevronRight, X, Zap, AlertTriangle,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { motion, AnimatePresence } from 'framer-motion'
 
 type NavTab = 'chat' | 'contacts' | 'moments' | 'intercept'
 
@@ -319,6 +320,9 @@ function ChatWindow() {
       {/* 幽灵卡片（AI建议5秒消散）*/}
       <GhostCard />
 
+      {/* 防双端打架黄色横幅（消息列表上方） */}
+      <TakeoverBanner leadId={lead.id} />
+
       {/* 消息区 */}
       <div className="flex-1 min-h-0 overflow-y-auto waos-scrollbar px-5 py-4 space-y-4 bg-[#f5f5f5] dark:bg-[#1e1e1e]">
         {/* 加密提示 */}
@@ -397,6 +401,42 @@ function ChatWindow() {
   )
 }
 
+// ─── 防双端打架：黄色人工接管警告横幅 ──────────────────────────
+// 当 takeoverWarning.active 且 leadId 匹配当前会话时，从顶部滑入显示黄色横幅。
+// 5 秒后 store 会自动清除；用户也可点 X 手动关闭。
+function TakeoverBanner({ leadId }: { leadId: string }) {
+  const warning = useOpsStore(s => s.takeoverWarning)
+  const clearTakeoverWarning = useOpsStore(s => s.clearTakeoverWarning)
+
+  const visible = !!(warning && warning.active && warning.leadId === leadId)
+
+  return (
+    <AnimatePresence>
+      {visible && warning && (
+        <motion.div
+          initial={{ height: 0, opacity: 0, y: -8 }}
+          animate={{ height: 'auto', opacity: 1, y: 0 }}
+          exit={{ height: 0, opacity: 0, y: -8 }}
+          transition={{ duration: 0.22, ease: 'easeOut' }}
+          className="shrink-0 overflow-hidden"
+        >
+          <div className="bg-amber-500/15 border-y border-amber-500/40 text-amber-700 dark:text-amber-400 px-4 py-2 text-xs flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            <span className="flex-1 truncate">检测到您正在手动回复，AI 已暂停 10 秒{warning.reason ? ` · ${warning.reason}` : ''}</span>
+            <button
+              onClick={clearTakeoverWarning}
+              aria-label="关闭横幅"
+              className="p-0.5 rounded hover:bg-amber-500/20 transition-colors shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
+}
+
 function PCMessageBubble({ msg, leadName, leadColor, personaAvatar }: { msg: LeadMessage; leadName: string; leadColor?: string; personaAvatar: string }) {
   const isMe = msg.role === 'assistant' || msg.role === 'human'
   // 兼容 createdAt (string) 和 ts (number) 两种字段，防 Invalid Date
@@ -404,8 +444,45 @@ function PCMessageBubble({ msg, leadName, leadColor, personaAvatar }: { msg: Lea
   const date = rawTs ? new Date(rawTs) : null
   const time = date && !isNaN(date.getTime()) ? date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' }) : ''
 
+  // 被安全护盾拦截 或 防双端打架触发 → 红色拦截气泡
+  const isBlocked = !!(msg.blocked || msg.safetyFiltered)
+
   if (msg.role === 'system') {
     return <div className="text-center py-1"><span className="text-[10px] px-2.5 py-1 rounded bg-[#e8e8e8] dark:bg-[#3a3a3a] text-[#7a7a7a] dark:text-[#9a9a9a]">{msg.content}</span></div>
+  }
+
+  // 拦截气泡：红色边框 + 左侧红色竖条 + "🚫 已拦截" 标签
+  if (isBlocked) {
+    return (
+      <div className={`flex gap-2.5 items-start ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+        <div
+          className="w-9 h-9 rounded-lg flex items-center justify-center text-[13px] font-semibold text-white shrink-0"
+          style={{ background: isMe ? 'linear-gradient(135deg, #ef4444, #b91c1c)' : (leadColor || '#86868b') }}
+        >
+          {isMe ? '🚫' : leadName.slice(0, 1)}
+        </div>
+        <div className={`max-w-[60%] ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
+          <div
+            className="relative pl-4 pr-3.5 py-2.5 text-[14px] leading-relaxed break-words shadow-sm border-2 border-red-500 bg-red-50 dark:bg-red-950/30 text-black dark:text-red-100"
+            style={{ borderRadius: isMe ? '12px 4px 12px 12px' : '4px 12px 12px 12px' }}
+          >
+            {/* 左侧红色竖条 */}
+            <span className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" style={{ borderTopLeftRadius: isMe ? 12 : 4, borderBottomLeftRadius: isMe ? 12 : 4 }} />
+            {/* "🚫 已拦截" 标签 */}
+            <div className="flex items-center gap-1 mb-1 text-[10px] font-semibold text-red-600 dark:text-red-400">
+              <span>🚫 已拦截</span>
+            </div>
+            <div className="text-black dark:text-red-100">{msg.content}</div>
+          </div>
+          {/* 拦截原因（小字） */}
+          <span className="text-[10px] text-red-500 dark:text-red-400 mt-1 px-1 flex items-center gap-1">
+            <Shield className="w-2.5 h-2.5" />
+            <span>{msg.blockedReason || msg.safetyReason || '已拦截'}</span>
+          </span>
+          <span className="text-[9px] text-[#b0b0b0] dark:text-[#666] mt-0.5 px-1">{time}</span>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -424,12 +501,6 @@ function PCMessageBubble({ msg, leadName, leadColor, personaAvatar }: { msg: Lea
           style={{ borderRadius: isMe ? '12px 4px 12px 12px' : '4px 12px 12px 12px' }}
         >
           {msg.content}
-          {msg.safetyFiltered && (
-            <div className="mt-1.5 pt-1.5 border-t border-black/10 flex items-center gap-1 text-[10px] text-amber-600">
-              <Shield className="w-2.5 h-2.5" />
-              <span>安全拦截: {msg.safetyReason}</span>
-            </div>
-          )}
         </div>
         <span className="text-[9px] text-[#b0b0b0] dark:text-[#666] mt-1 px-1">{time}</span>
       </div>

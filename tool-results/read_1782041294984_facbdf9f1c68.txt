@@ -1,0 +1,849 @@
+     1→'use client'
+     2→
+     3→import { useOpsStore, type LeadMessage } from '@/store/useOpsStore'
+     4→import {
+     5→  MessageCircle, Camera, Users, Send, Smile, Plus, ChevronLeft, MoreVertical,
+     6→  Heart, MessageSquare, Shield, Loader2, Clock, Sparkles, Search, Phone, Video,
+     7→  PanelLeft, Image as ImageIcon, FileText, Scissors, ScreenShare, Folder,
+     8→  ChevronRight, X, Zap,
+     9→} from 'lucide-react'
+    10→import { useEffect, useRef, useState } from 'react'
+    11→import { toast } from 'sonner'
+    12→
+    13→type NavTab = 'chat' | 'contacts' | 'moments' | 'intercept'
+    14→
+    15→// 补充类型定义（修复 TS2304）
+    16→type MomentPostType = Record<string, unknown>
+    17→type CommentType = Record<string, unknown>
+    18→type InterceptTargetType = Record<string, unknown>
+    19→
+    20→export function WeChatClient() {
+    21→  const navTab = useOpsStore(s => s.clientTab)
+    22→  const setNavTab = useOpsStore(s => s.setClientTab)
+    23→  const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
+    24→  const wechatReal = useOpsStore(s => s.wechatReal)
+    25→
+    26→  return (
+    27→    <div className="flex h-full min-h-0 bg-[#f5f5f5] dark:bg-[#1e1e1e]">
+    28→      {/* ─── 左侧导航栏（PC微信窄条）────────────────────────── */}
+    29→      <nav className="w-[60px] shrink-0 bg-[#2e2e2e] flex flex-col items-center py-4 gap-2">
+    30→        {/* 个人头像 — 显示微信连接状态 */}
+    31→        <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-[14px] mb-2 relative ${
+    32→          wechatReal.running ? 'bg-gradient-to-br from-emerald-400 to-teal-500' :
+    33→          wechatReal.loggedIn ? 'bg-gradient-to-br from-sky-400 to-blue-500' :
+    34→          'bg-zinc-600'
+    35→        }`} title={
+    36→          wechatReal.running ? '🟢 微信自动回复运行中' :
+    37→          wechatReal.loggedIn ? '✅ 微信已登录' : '❌ 微信未登录'
+    38→        }>
+    39→          {wechatReal.running ? '🤖' : wechatReal.loggedIn ? '🌿' : '⚠️'}
+    40→          {wechatReal.running && (
+    41→            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-[#2e2e2e] animate-pulse" />
+    42→          )}
+    43→        </div>
+    44→
+    45→        {/* 微信 */}
+    46→        <NavButton active={navTab === 'chat'} onClick={() => setNavTab('chat')} icon={<MessageCircle className="w-5 h-5" />} label="微信" badge={wechatReal.messageCount || 3} />
+    47→        {/* 通讯录 */}
+    48→        <NavButton active={navTab === 'contacts'} onClick={() => setNavTab('contacts')} icon={<Users className="w-5 h-5" />} label="通讯录" />
+    49→        {/* 朋友圈 */}
+    50→        <NavButton active={navTab === 'moments'} onClick={() => setNavTab('moments')} icon={<Camera className="w-5 h-5" />} label="朋友圈" />
+    51→        {/* 视频号截流 */}
+    52→        <NavButton active={navTab === 'intercept'} onClick={() => setNavTab('intercept')} icon={<Video className="w-5 h-5" />} label="视频获客" badge={undefined} />
+    53→
+    54→        <div className="flex-1" />
+    55→
+    56→        {/* 设置 */}
+    57→        <button className="w-9 h-9 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10 transition-colors">
+    58→          <Folder className="w-4 h-4" />
+    59→        </button>
+    60→        <button className="w-9 h-9 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10 transition-colors">
+    61→          <MoreVertical className="w-4 h-4" />
+    62→        </button>
+    63→      </nav>
+    64→
+    65→      {/* ─── 中间内容区 ──────────────────────────────────────── */}
+    66→      {navTab === 'chat' && <ChatLayout />}
+    67→      {navTab === 'contacts' && <ContactsLayout />}
+    68→      {navTab === 'moments' && <MomentsLayout />}
+    69→      {navTab === 'intercept' && <InterceptLayout />}
+    70→    </div>
+    71→  )
+    72→}
+    73→
+    74→function NavButton({ active, onClick, icon, label, badge }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; badge?: number }) {
+    75→  return (
+    76→    <button
+    77→      onClick={onClick}
+    78→      className={`relative w-12 h-12 rounded-lg flex flex-col items-center justify-center gap-0.5 transition-colors ${
+    79→        active ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
+    80→      }`}
+    81→    >
+    82→      {icon}
+    83→      <span className="text-[9px] font-medium">{label}</span>
+    84→      {badge && badge > 0 && (
+    85→        <span className="absolute top-1 right-1 min-w-[14px] h-3.5 px-1 flex items-center justify-center rounded-full bg-[#fa5151] text-white text-[8px] font-bold">
+    86→          {badge}
+    87→        </span>
+    88→      )}
+    89→    </button>
+    90→  )
+    91→}
+    92→
+    93→// ─── 聊天布局: 会话列表 + 聊天窗口 ────────────────────────────
+    94→function ChatLayout() {
+    95→  const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
+    96→  const wechatReal = useOpsStore(s => s.wechatReal)
+    97→  const wechatLogin = useOpsStore(s => s.wechatLogin)
+    98→  const wechatStart = useOpsStore(s => s.wechatStart)
+    99→  const wechatStop = useOpsStore(s => s.wechatStop)
+   100→
+   101→  return (
+   102→    <>
+   103→      {/* 会话列表 */}
+   104→      <div className="w-[280px] shrink-0 bg-white dark:bg-[#2a2a2a] border-r border-black/5 dark:border-white/5 flex flex-col">
+   105→        {/* 微信连接状态条 */}
+   106→        <WeChatStatusBar
+   107→          loggedIn={wechatReal.loggedIn}
+   108→          running={wechatReal.running}
+   109→          messageCount={wechatReal.messageCount}
+   110→          replyCount={wechatReal.replyCount}
+   111→          loginLoading={wechatReal.loginLoading}
+   112→          onLogin={() => wechatLogin()}
+   113→          onStart={() => wechatStart()}
+   114→          onStop={() => wechatStop()}
+   115→        />
+   116→        {/* 搜索 */}
+   117→        <div className="p-2.5 border-b border-black/5 dark:border-white/5">
+   118→          <div className="px-2.5 py-1.5 rounded bg-[#f5f5f5] dark:bg-[#1e1e1e] flex items-center gap-1.5">
+   119→            <Search className="w-3.5 h-3.5 text-[#7a7a7a] dark:text-[#9a9a9a]" />
+   120→            <span className="text-[12px] text-[#7a7a7a] dark:text-[#9a9a9a]">搜索</span>
+   121→          </div>
+   122→        </div>
+   123→        {/* 会话项 */}
+   124→        <ConversationList />
+   125→      </div>
+   126→
+   127→      {/* 聊天窗口 */}
+   128→      <div className="flex-1 min-w-0 flex flex-col bg-[#f5f5f5] dark:bg-[#1e1e1e]">
+   129→        {lead ? <ChatWindow /> : <EmptyChat />}
+   130→      </div>
+   131→    </>
+   132→  )
+   133→}
+   134→
+   135→// ─── 微信连接状态条 ──────────────────────────────────────────
+   136→function WeChatStatusBar({ loggedIn, running, messageCount, replyCount, loginLoading, onLogin, onStart, onStop }: {
+   137→  loggedIn: boolean
+   138→  running: boolean
+   139→  messageCount: number
+   140→  replyCount: number
+   141→  loginLoading: boolean
+   142→  onLogin: () => void
+   143→  onStart: () => void
+   144→  onStop: () => void
+   145→}) {
+   146→  if (running) {
+   147→    // 运行中：绿色状态条
+   148→    return (
+   149→      <div className="shrink-0 px-3 py-2 bg-emerald-500/10 border-b border-emerald-500/20 flex items-center gap-2">
+   150→        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+   151→        <div className="flex-1 min-w-0">
+   152→          <div className="text-[11px] font-semibold text-emerald-700">🤖 AI 自动回复运行中</div>
+   153→          <div className="text-[9px] text-emerald-600/70">收{messageCount} · 回{replyCount} · ClawBot 已接管</div>
+   154→        </div>
+   155→        <button onClick={onStop} className="px-2 py-1 rounded text-[10px] font-medium bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 apple-btn">
+   156→          停止
+   157→        </button>
+   158→      </div>
+   159→    )
+   160→  }
+   161→
+   162→  if (loggedIn) {
+   163→    // 已登录未运行：蓝色提示启动
+   164→    return (
+   165→      <div className="shrink-0 px-3 py-2 bg-sky-500/10 border-b border-sky-500/20 flex items-center gap-2">
+   166→        <span className="w-2 h-2 rounded-full bg-sky-500 shrink-0" />
+   167→        <div className="flex-1 min-w-0">
+   168→          <div className="text-[11px] font-semibold text-sky-700">✅ 微信已登录</div>
+   169→          <div className="text-[9px] text-sky-600/70">点击启动 AI 自动回复</div>
+   170→        </div>
+   171→        <button onClick={onStart} className="px-2.5 py-1 rounded text-[10px] font-medium bg-emerald-500 text-white hover:bg-emerald-600 apple-btn flex items-center gap-1">
+   172→          <Zap className="w-2.5 h-2.5" />
+   173→          启动AI
+   174→        </button>
+   175→      </div>
+   176→    )
+   177→  }
+   178→
+   179→  // 未登录：红色提示扫码
+   180→  return (
+   181→    <div className="shrink-0 px-3 py-2 bg-rose-500/10 border-b border-rose-500/20 flex items-center gap-2">
+   182→      <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+   183→      <div className="flex-1 min-w-0">
+   184→        <div className="text-[11px] font-semibold text-rose-700">⚠️ 微信未连接</div>
+   185→        <div className="text-[9px] text-rose-600/70">扫码登录真实微信，启用自动回复</div>
+   186→      </div>
+   187→      <button onClick={onLogin} disabled={loginLoading}
+   188→        className="px-2.5 py-1 rounded text-[10px] font-medium bg-rose-500 text-white hover:bg-rose-600 disabled:opacity-50 apple-btn flex items-center gap-1">
+   189→        {loginLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <MessageCircle className="w-2.5 h-2.5" />}
+   190→        {loginLoading ? '连接中' : '扫码登录'}
+   191→      </button>
+   192→    </div>
+   193→  )
+   194→}
+   195→
+   196→function ConversationList() {
+   197→  const leads = useOpsStore(s => s.leads)
+   198→  const selectedLeadId = useOpsStore(s => s.clientViewLeadId)
+   199→  const selectLead = useOpsStore(s => s.selectLead)
+   200→
+   201→  return (
+   202→    <div className="flex-1 overflow-y-auto waos-scrollbar">
+   203→      {leads.slice(0, 30).map(lead => {
+   204→        const active = lead.id === selectedLeadId
+   205→        return (
+   206→          <button
+   207→            key={lead.id}
+   208→            onClick={() => selectLead(lead.id)}
+   209→            className={`w-full flex items-start gap-2.5 px-3 py-2.5 border-b border-black/3 dark:border-white/5 text-left transition-colors ${
+   210→              active ? 'bg-[#d6d6d6] dark:bg-[#3a3a3a]' : 'hover:bg-[#f5f5f5] dark:hover:bg-[#333]'
+   211→            }`}
+   212→          >
+   213→            <div
+   214→              className="w-10 h-10 rounded-lg flex items-center justify-center text-[14px] font-semibold text-white shrink-0 relative"
+   215→              style={{ background: lead.personaColor || '#86868b' }}
+   216→            >
+   217→              {lead.userName.slice(0, 1)}
+   218→              {lead.unread && (
+   219→                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-[#fa5151] text-white text-[9px] font-bold">
+   220→                  {lead.messages?.length || 1}
+   221→                </span>
+   222→              )}
+   223→            </div>
+   224→            <div className="flex-1 min-w-0">
+   225→              <div className="flex items-baseline justify-between">
+   226→                <span className="text-[13px] font-medium truncate">{lead.userName}</span>
+   227→                <span className="text-[10px] text-[#7a7a7a] dark:text-[#9a9a9a] shrink-0 ml-2">{convTime(lead.lastTouchAt)}</span>
+   228→              </div>
+   229→              <div className="text-[11px] text-[#7a7a7a] dark:text-[#9a9a9a] truncate mt-0.5">{lead.lastMessage}</div>
+   230→            </div>
+   231→          </button>
+   232→        )
+   233→      })}
+   234→    </div>
+   235→  )
+   236→}
+   237→
+   238→function EmptyChat() {
+   239→  return (
+   240→    <div className="flex-1 flex items-center justify-center">
+   241→      <div className="text-center">
+   242→        <MessageCircle className="w-12 h-12 text-[#d6d6d6] mx-auto mb-2" />
+   243→        <p className="text-[13px] text-[#7a7a7a] dark:text-[#9a9a9a]">未选择聊天</p>
+   244→        <p className="text-[11px] text-[#b0b0b0] dark:text-[#666] mt-1">从左侧选择一位客户开始对话</p>
+   245→      </div>
+   246→    </div>
+   247→  )
+   248→}
+   249→
+   250→function ChatWindow() {
+   251→  const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
+   252→  const draft = useOpsStore(s => s.clientDraft)
+   253→  const setClientDraft = useOpsStore(s => s.setClientDraft)
+   254→  const sending = useOpsStore(s => s.clientSending)
+   255→  const typing = useOpsStore(s => s.clientTyping)
+   256→  const sendClientMessage = useOpsStore(s => s.sendClientMessage)
+   257→  const suggestions = useOpsStore(s => s.replySuggestions)
+   258→  const applySuggestion = useOpsStore(s => s.applySuggestion)
+   259→  const activePersonaId = useOpsStore(s => s.activePersonaId)
+   260→  const personas = useOpsStore(s => s.personas)
+   261→  const persona = personas.find(p => p.id === activePersonaId) || personas[0]
+   262→
+   263→  const messagesEndRef = useRef<HTMLDivElement>(null)
+   264→
+   265→  useEffect(() => {
+   266→    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+   267→  }, [lead?.messages, typing])
+   268→
+   269→  const handleSend = () => {
+   270→    if (!draft.trim() || sending) return
+   271→    sendClientMessage()
+   272→  }
+   273→
+   274→  const handleKeyDown = (e: React.KeyboardEvent) => {
+   275→    if (e.key === 'Enter' && !e.shiftKey) {
+   276→      e.preventDefault()
+   277→      handleSend()
+   278→    }
+   279→  }
+   280→
+   281→  if (!lead) return <EmptyChat />
+   282→
+   283→  return (
+   284→    <div className="flex flex-col h-full">
+   285→      {/* 聊天 header */}
+   286→      <div className="h-14 shrink-0 bg-[#f5f5f5] dark:bg-[#1e1e1e] border-b border-black/5 dark:border-white/5 flex items-center px-5 gap-3">
+   287→        <div className="flex-1 min-w-0">
+   288→          <h3 className="text-[15px] font-semibold truncate">{lead.userName}</h3>
+   289→          <p className="text-[10px] text-[#7a7a7a] dark:text-[#9a9a9a]">
+   290→            {sourceLabel(lead.source)} · {lead.messages?.length || 0} 条消息
+   291→          </p>
+   292→        </div>
+   293→        <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"><Phone className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
+   294→        <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"><Video className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
+   295→        <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"><PanelLeft className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
+   296→      </div>
+   297→
+   298→      {/* 推荐回复 chips */}
+   299→      {suggestions.length > 0 && !draft && (
+   300→        <div className="shrink-0 px-4 py-2 bg-white dark:bg-[#2a2a2a] border-b border-black/5 dark:border-white/5">
+   301→          <div className="flex items-center gap-1.5 mb-1.5">
+   302→            <Sparkles className="w-3 h-3 text-[#07C160]" />
+   303→            <span className="text-[10px] font-semibold text-[#7a7a7a] dark:text-[#9a9a9a]">AI 推荐 · {persona.shortName}风格</span>
+   304→          </div>
+   305→          <div className="flex flex-wrap gap-1.5">
+   306→            {suggestions.map(s => (
+   307→              <button
+   308→                key={s.id}
+   309→                onClick={() => applySuggestion(s)}
+   310→                className="text-[11px] px-2.5 py-1 rounded border border-black/10 dark:border-white/10 hover:border-[#07C160]/40 hover:bg-[#07C160]/5 dark:hover:bg-[#07C160]/10 text-left max-w-full transition-colors apple-btn"
+   311→              >
+   312→                {s.content.slice(0, 24)}{s.content.length > 24 ? '…' : ''}
+   313→              </button>
+   314→            ))}
+   315→          </div>
+   316→        </div>
+   317→      )}
+   318→
+   319→      {/* 幽灵卡片（AI建议5秒消散）*/}
+   320→      <GhostCard />
+   321→
+   322→      {/* 消息区 */}
+   323→      <div className="flex-1 min-h-0 overflow-y-auto waos-scrollbar px-5 py-4 space-y-4 bg-[#f5f5f5] dark:bg-[#1e1e1e]">
+   324→        {/* 加密提示 */}
+   325→        <div className="text-center">
+   326→          <span className="text-[10px] px-2.5 py-1 rounded bg-[#e8e8e8] dark:bg-[#3a3a3a] text-[#7a7a7a] dark:text-[#9a9a9a]">
+   327→            <Shield className="w-2.5 h-2.5 inline mr-1" />
+   328→            微信对话已加密
+   329→          </span>
+   330→        </div>
+   331→
+   332→        {(lead.messages || []).map(msg => (
+   333→          <PCMessageBubble key={msg.id} msg={msg} leadName={lead.userName} leadColor={lead.personaColor} personaAvatar={persona.avatar} />
+   334→        ))}
+   335→
+   336→        {/* 打字动画 */}
+   337→        {typing && (
+   338→          <div className="flex gap-2.5 items-start">
+   339→            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-[14px] shrink-0">
+   340→              {persona.avatar}
+   341→            </div>
+   342→            <div className="px-3.5 py-2.5 rounded-lg bg-white dark:bg-[#2a2a2a] shadow-sm" style={{ borderRadius: '4px 12px 12px 12px' }}>
+   343→              <div className="flex items-center gap-1">
+   344→                <span className="w-1.5 h-1.5 rounded-full bg-[#7a7a7a] animate-bounce" style={{ animationDelay: '0ms' }} />
+   345→                <span className="w-1.5 h-1.5 rounded-full bg-[#7a7a7a] animate-bounce" style={{ animationDelay: '150ms' }} />
+   346→                <span className="w-1.5 h-1.5 rounded-full bg-[#7a7a7a] animate-bounce" style={{ animationDelay: '300ms' }} />
+   347→              </div>
+   348→            </div>
+   349→          </div>
+   350→        )}
+   351→        <div ref={messagesEndRef} />
+   352→      </div>
+   353→
+   354→      {/* 发送中 */}
+   355→      {sending && (
+   356→        <div className="shrink-0 px-4 py-1 bg-amber-500/5 border-t border-amber-500/20 flex items-center gap-1.5">
+   357→          <Clock className="w-3 h-3 text-amber-500 animate-pulse" />
+   358→          <span className="text-[10px] text-amber-600">人类行为模拟中 · 防封号延迟</span>
+   359→        </div>
+   360→      )}
+   361→
+   362→      {/* 输入区 */}
+   363→      <div className="shrink-0 bg-[#f5f5f5] dark:bg-[#1e1e1e] border-t border-black/5">
+   364→        {/* 工具栏 */}
+   365→        <div className="px-4 pt-2 flex items-center gap-3 text-[#7a7a7a] dark:text-[#9a9a9a]">
+   366→          <Smile className="w-4 h-4 hover:text-[#07C160] cursor-pointer" />
+   367→          <FileText className="w-4 h-4 hover:text-[#07C160] cursor-pointer" />
+   368→          <Scissors className="w-4 h-4 hover:text-[#07C160] cursor-pointer" />
+   369→          <ScreenShare className="w-4 h-4 hover:text-[#07C160] cursor-pointer" />
+   370→          <ImageIcon className="w-4 h-4 hover:text-[#07C160] cursor-pointer" />
+   371→          <div className="flex-1" />
+   372→          <span className="text-[10px] text-[#b0b0b0] dark:text-[#666]">Enter 发送 · Shift+Enter 换行</span>
+   373→        </div>
+   374→        {/* 输入框 */}
+   375→        <textarea
+   376→          value={draft}
+   377→          onChange={e => setClientDraft(e.target.value)}
+   378→          onKeyDown={handleKeyDown}
+   379→          placeholder="输入消息…"
+   380→          disabled={sending}
+   381→          rows={3}
+   382→          className="w-full px-4 py-2 text-[14px] bg-transparent resize-none focus:outline-none disabled:opacity-50 placeholder:text-[#b0b0b0] dark:text-[#666]"
+   383→        />
+   384→        {/* 发送按钮 */}
+   385→        <div className="px-4 pb-3 flex justify-end">
+   386→          <button
+   387→            onClick={handleSend} aria-label="发送消息"
+   388→            disabled={sending || !draft.trim()}
+   389→            className="px-5 h-8 rounded-lg bg-[#07C160] text-white text-[12px] font-medium disabled:opacity-40 hover:bg-[#06ad56] active:scale-[0.98] transition-all apple-btn flex items-center gap-1"
+   390→          >
+   391→            {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+   392→            {sending ? '发送中' : '发送'}
+   393→          </button>
+   394→        </div>
+   395→      </div>
+   396→    </div>
+   397→  )
+   398→}
+   399→
+   400→function PCMessageBubble({ msg, leadName, leadColor, personaAvatar }: { msg: LeadMessage; leadName: string; leadColor?: string; personaAvatar: string }) {
+   401→  const isMe = msg.role === 'assistant' || msg.role === 'human'
+   402→  // 兼容 createdAt (string) 和 ts (number) 两种字段，防 Invalid Date
+   403→  const rawTs = (msg as any).createdAt ?? (msg as any).ts ?? (msg as any).timestamp
+   404→  const date = rawTs ? new Date(rawTs) : null
+   405→  const time = date && !isNaN(date.getTime()) ? date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' }) : ''
+   406→
+   407→  if (msg.role === 'system') {
+   408→    return <div className="text-center py-1"><span className="text-[10px] px-2.5 py-1 rounded bg-[#e8e8e8] dark:bg-[#3a3a3a] text-[#7a7a7a] dark:text-[#9a9a9a]">{msg.content}</span></div>
+   409→  }
+   410→
+   411→  return (
+   412→    <div className={`flex gap-2.5 items-start ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+   413→      <div
+   414→        className="w-9 h-9 rounded-lg flex items-center justify-center text-[13px] font-semibold text-white shrink-0"
+   415→        style={{ background: isMe ? 'linear-gradient(135deg, #10b981, #14b8a6)' : (leadColor || '#86868b') }}
+   416→      >
+   417→        {isMe ? personaAvatar : leadName.slice(0, 1)}
+   418→      </div>
+   419→      <div className={`max-w-[60%] ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
+   420→        <div
+   421→          className={`px-3.5 py-2.5 text-[14px] leading-relaxed break-words shadow-sm ${
+   422→            isMe ? 'bg-[#95EC69] text-black' : 'bg-white text-black'
+   423→          }`}
+   424→          style={{ borderRadius: isMe ? '12px 4px 12px 12px' : '4px 12px 12px 12px' }}
+   425→        >
+   426→          {msg.content}
+   427→          {msg.safetyFiltered && (
+   428→            <div className="mt-1.5 pt-1.5 border-t border-black/10 flex items-center gap-1 text-[10px] text-amber-600">
+   429→              <Shield className="w-2.5 h-2.5" />
+   430→              <span>安全拦截: {msg.safetyReason}</span>
+   431→            </div>
+   432→          )}
+   433→        </div>
+   434→        <span className="text-[9px] text-[#b0b0b0] dark:text-[#666] mt-1 px-1">{time}</span>
+   435→      </div>
+   436→    </div>
+   437→  )
+   438→}
+   439→
+   440→// ─── 通讯录布局 ──────────────────────────────────────────────
+   441→function ContactsLayout() {
+   442→  const leads = useOpsStore(s => s.leads)
+   443→  const selectLead = useOpsStore(s => s.selectLead)
+   444→
+   445→  return (
+   446→    <div className="flex-1 flex bg-white">
+   447→      <div className="w-[280px] shrink-0 border-r border-black/5 dark:border-white/5 flex flex-col">
+   448→        <div className="p-3 border-b border-black/5 dark:border-white/5">
+   449→          <div className="px-2.5 py-1.5 rounded bg-[#f5f5f5] dark:bg-[#1e1e1e] flex items-center gap-1.5">
+   450→            <Search className="w-3.5 h-3.5 text-[#7a7a7a] dark:text-[#9a9a9a]" />
+   451→            <span className="text-[12px] text-[#7a7a7a] dark:text-[#9a9a9a]">搜索</span>
+   452→          </div>
+   453→        </div>
+   454→        <div className="px-3 py-2 text-[11px] font-semibold text-[#7a7a7a] dark:text-[#9a9a9a] bg-[#f9f9f9]">客户 · {leads.length}</div>
+   455→        <div className="flex-1 overflow-y-auto waos-scrollbar">
+   456→          {leads.map(lead => (
+   457→            <button
+   458→              key={lead.id}
+   459→              onClick={() => selectLead(lead.id)}
+   460→              className="w-full flex items-center gap-2.5 px-3 py-2.5 border-b border-black/3 dark:border-white/5 hover:bg-[#f5f5f5] dark:hover:bg-[#333] transition-colors text-left"
+   461→            >
+   462→              <div
+   463→                className="w-9 h-9 rounded-lg flex items-center justify-center text-[13px] font-semibold text-white shrink-0"
+   464→                style={{ background: lead.personaColor || '#86868b' }}
+   465→              >
+   466→                {lead.userName.slice(0, 1)}
+   467→              </div>
+   468→              <div className="flex-1 min-w-0">
+   469→                <div className="text-[13px] font-medium truncate">{lead.userName}</div>
+   470→                <div className="text-[10px] text-[#7a7a7a] dark:text-[#9a9a9a] truncate">{lead.lastMessage}</div>
+   471→              </div>
+   472→            </button>
+   473→          ))}
+   474→        </div>
+   475→      </div>
+   476→      <div className="flex-1 flex items-center justify-center">
+   477→        <div className="text-center">
+   478→          <Users className="w-12 h-12 text-[#d6d6d6] mx-auto mb-2" />
+   479→          <p className="text-[13px] text-[#7a7a7a] dark:text-[#9a9a9a]">选择一位客户查看详情</p>
+   480→        </div>
+   481→      </div>
+   482→    </div>
+   483→  )
+   484→}
+   485→
+   486→// ─── 朋友圈布局 ──────────────────────────────────────────────
+   487→function MomentsLayout() {
+   488→  const moments = useOpsStore(s => s.moments)
+   489→  const refreshMoments = useOpsStore(s => s.refreshMoments)
+   490→  const activePersonaId = useOpsStore(s => s.activePersonaId)
+   491→  const personas = useOpsStore(s => s.personas)
+   492→  const persona = personas.find(p => p.id === activePersonaId) || personas[0]
+   493→
+   494→  useEffect(() => {
+   495→    if (moments.length === 0) refreshMoments()
+   496→  }, [moments.length, refreshMoments])
+   497→
+   498→  return (
+   499→    <div className="flex-1 flex flex-col bg-white">
+   500→      {/* 封面 */}
+   501→      <div className="h-40 bg-gradient-to-br from-emerald-400 via-teal-400 to-cyan-500 relative">
+   502→        <div className="absolute bottom-3 right-5 flex items-end gap-3">
+   503→          <div className="text-right">
+   504→            <div className="text-[16px] font-semibold text-white">{persona.name}</div>
+   505→            <div className="text-[11px] text-white/80">{persona.description}</div>
+   506→          </div>
+   507→          <div className="w-14 h-14 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center text-2xl border-2 border-white">
+   508→            {persona.avatar}
+   509→          </div>
+   510→        </div>
+   511→      </div>
+   512→
+   513→      {/* 发布 */}
+   514→      <div className="px-5 py-3 border-b border-black/5 dark:border-white/5 flex items-center gap-3">
+   515→        <input
+   516→          type="text"
+   517→          placeholder="分享这一刻…"
+   518→          className="flex-1 px-3 py-2 text-[13px] rounded bg-[#f5f5f5] dark:bg-[#1e1e1e] border border-transparent focus:outline-none focus:border-[#07C160]/40 focus:bg-white"
+   519→        />
+   520→        <button className="px-4 py-2 text-[12px] font-medium text-[#07C160] rounded hover:bg-[#07C160]/5">发表</button>
+   521→      </div>
+   522→
+   523→      {/* 动态 */}
+   524→      <div className="flex-1 overflow-y-auto waos-scrollbar">
+   525→        {moments.map(post => <MomentPost key={post.id} post={post} />)}
+   526→      </div>
+   527→    </div>
+   528→  )
+   529→}
+   530→
+   531→function MomentPost({ post }: { post: MomentPostType }) {
+   532→  const [liked, setLiked] = useState(false)
+   533→  const [likes, setLikes] = useState(post.likes)
+   534→  const [showComments, setShowComments] = useState(false)
+   535→  const [comments, setComments] = useState(post.comments)
+   536→  const [commentDraft, setCommentDraft] = useState('')
+   537→  const activePersonaId = useOpsStore(s => s.activePersonaId)
+   538→  const personas = useOpsStore(s => s.personas)
+   539→  const persona = personas.find(p => p.id === activePersonaId) || personas[0]
+   540→
+   541→  const sendComment = () => {
+   542→    if (!commentDraft.trim()) return
+   543→    setComments([...comments, { author: persona.name, content: commentDraft }])
+   544→    setCommentDraft('')
+   545→    toast.success('评论已发送')
+   546→  }
+   547→
+   548→  return (
+   549→    <div className="px-5 py-4 border-b border-black/5 dark:border-white/5">
+   550→      <div className="flex gap-3">
+   551→        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-[15px] font-semibold text-white shrink-0 ${post.isLead ? 'bg-gradient-to-br from-orange-400 to-rose-500' : 'bg-gradient-to-br from-emerald-400 to-teal-500'}`}>
+   552→          {post.authorAvatar}
+   553→        </div>
+   554→        <div className="flex-1 min-w-0">
+   555→          <div className="flex items-baseline gap-1.5">
+   556→            <span className="text-[13px] font-semibold text-[#576b95]">{post.authorName}</span>
+   557→            {post.isLead && <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-600 font-medium">客户</span>}
+   558→          </div>
+   559→          <p className="text-[14px] mt-1.5 leading-relaxed text-black">{post.content}</p>
+   560→
+   561→          {/* 互动栏 */}
+   562→          <div className="flex items-center gap-5 mt-2.5">
+   563→            <span className="text-[11px] text-[#7a7a7a] dark:text-[#9a9a9a]">{formatTimeAgo(new Date(post.createdAt).getTime())}</span>
+   564→            <button onClick={() => { setLiked(!liked); setLikes(liked ? likes - 1 : likes + 1); if (!liked) toast.success('已点赞') }} className={`flex items-center gap-1 text-[12px] transition-colors ${liked ? 'text-[#fa5151]' : 'text-[#7a7a7a] dark:text-[#9a9a9a] hover:text-[#fa5151]'}`}>
+   565→              <Heart className={`w-3.5 h-3.5 ${liked ? 'fill-current' : ''}`} />
+   566→              {likes}
+   567→            </button>
+   568→            <button onClick={() => setShowComments(!showComments)} className="flex items-center gap-1 text-[12px] text-[#7a7a7a] dark:text-[#9a9a9a] hover:text-[#576b95]">
+   569→              <MessageSquare className="w-3.5 h-3.5" />
+   570→              {comments.length}
+   571→            </button>
+   572→          </div>
+   573→
+   574→          {/* 评论列表 */}
+   575→          {showComments && (
+   576→            <div className="mt-2 pl-2 border-l-2 border-black/5 space-y-1.5">
+   577→              {comments.map((c: CommentType, i: number) => (
+   578→                <div key={i} className="text-[11px]">
+   579→                  <span className="text-[#576b95] font-medium">{c.author}：</span>
+   580→                  <span className="text-black">{c.content}</span>
+   581→                </div>
+   582→              ))}
+   583→              {/* 评论输入 */}
+   584→              <div className="flex gap-1.5 mt-2">
+   585→                <input
+   586→                  value={commentDraft}
+   587→                  onChange={e => setCommentDraft(e.target.value)}
+   588→                  onKeyDown={e => e.key === 'Enter' && sendComment()}
+   589→                  placeholder={`以${persona.shortName}身份评论…`}
+   590→                  className="flex-1 px-2 py-1 text-[11px] rounded bg-[#f7f7f7] border border-black/5 focus:outline-none focus:border-[#07C160]/40"
+   591→                />
+   592→                <button onClick={sendComment} className="px-2 py-1 text-[10px] rounded bg-[#07C160] text-white">发送</button>
+   593→              </div>
+   594→            </div>
+   595→          )}
+   596→        </div>
+   597→      </div>
+   598→    </div>
+   599→  )
+   600→}
+   601→
+   602→// ─── 幽灵卡片（AI建议5秒消散）──────────────────────────────
+   603→function GhostCard() {
+   604→  const ghost = useOpsStore(s => s.ghostCard)
+   605→  const dismiss = useOpsStore(s => s.dismissGhostCard)
+   606→  const setClientDraft = useOpsStore(s => s.setClientDraft)
+   607→
+   608→  // ghost 存在就显示，5秒后 store 自动清除（showGhostCard 里的 setTimeout）
+   609→  if (!ghost) return null
+   610→
+   611→  return (
+   612→    <div className="shrink-0 px-4 py-2 bg-gradient-to-r from-purple-500/10 to-transparent border-b border-purple-500/20 animate-in fade-in slide-in-from-top-2 duration-300">
+   613→      <div className="flex items-start gap-2">
+   614→        <div className="w-6 h-6 rounded-lg bg-purple-500/20 flex items-center justify-center shrink-0">
+   615→          <Sparkles className="w-3 h-3 text-purple-500" />
+   616→        </div>
+   617→        <div className="flex-1 min-w-0">
+   618→          <div className="text-[10px] text-purple-600 font-semibold mb-0.5">
+   619→            💡 AI 建议 · {ghost.strategy} · {Math.round(ghost.confidence * 100)}%
+   620→          </div>
+   621→          <div className="text-[12px] text-foreground leading-relaxed">{ghost.content}</div>
+   622→        </div>
+   623→        <button
+   624→          onClick={() => { setClientDraft(ghost.content); dismiss(); toast.success('已采纳') }}
+   625→          className="shrink-0 px-2 py-1 text-[10px] rounded bg-purple-500/20 text-purple-600 hover:bg-purple-500/30 apple-btn"
+   626→        >
+   627→          采纳
+   628→        </button>
+   629→        <button onClick={dismiss} className="shrink-0 text-purple-400 hover:text-purple-600 p-0.5">
+   630→          <X className="w-3 h-3" />
+   631→        </button>
+   632→      </div>
+   633→      <div className="text-[8px] text-purple-400/60 mt-1 ml-8">5秒后自动消失</div>
+   634→    </div>
+   635→  )
+   636→}
+   637→
+   638→// ─── 视频号截流引擎 ──────────────────────────────────────────
+   639→function InterceptLayout() {
+   640→  const vi = useOpsStore(s => s.videoIntercept)
+   641→  const toggleVideoIntercept = useOpsStore(s => s.toggleVideoIntercept)
+   642→  const sendInterceptDM = useOpsStore(s => s.sendInterceptDM)
+   643→  const scanVideoComments = useOpsStore(s => s.scanVideoComments)
+   644→  const videoPrioritySort = useOpsStore(s => s.videoPrioritySort)
+   645→  const toggleVideoPrioritySort = useOpsStore(s => s.toggleVideoPrioritySort)
+   646→  const [sendingId, setSendingId] = useState<string | null>(null)
+   647→
+   648→  const handleSendDM = async (targetId: string) => {
+   649→    setSendingId(targetId)
+   650→    await sendInterceptDM(targetId)
+   651→    setSendingId(null)
+   652→    toast.success('私信已发送')
+   653→  }
+   654→
+   655→  const handleBatchSend = async () => {
+   656→    const pending = vi.targets.filter(t => t.intentScore >= 70 && t.dmStatus === 'pending')
+   657→    for (const t of pending) {
+   658→      await handleSendDM(t.id)
+   659→      await new Promise(r => setTimeout(r, 2000)) // 防封间隔
+   660→    }
+   661→    toast.success(`批量私信完成: ${pending.length}个客户`)
+   662→  }
+   663→
+   664→  const highIntentTargets = vi.targets.filter(t => t.intentScore >= 70)
+   665→  const lowIntentTargets = vi.targets.filter(t => t.intentScore < 70)
+   666→
+   667→  return (
+   668→    <div className="flex-1 flex flex-col bg-white min-h-0">
+   669→      {/* Header */}
+   670→      <div className="shrink-0 px-4 py-3 border-b border-black/5 dark:border-white/5 bg-[#f7f7f7]">
+   671→        <div className="flex items-center justify-between">
+   672→          <div>
+   673→            <h2 className="text-[14px] font-semibold">视频号获客助手</h2>
+   674→            <p className="text-[10px] text-[#7a7a7a] dark:text-[#9a9a9a] mt-0.5">监控视频号评论区 → 识别高意向 → 自动私信</p>
+   675→          </div>
+   676→          <button
+   677→            onClick={toggleVideoIntercept}
+   678→            className={`px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors apple-btn ${
+   679→              vi.enabled ? 'bg-emerald-500 text-white' : 'bg-[#f0f0f0] text-[#7a7a7a] dark:text-[#9a9a9a]'
+   680→            }`}
+   681→          >
+   682→            {vi.enabled ? '● 获客中' : '○ 未启动'}
+   683→          </button>
+   684→        </div>
+   685→      </div>
+   686→
+   687→      {/* 监控视频信息 */}
+   688→      <div className="shrink-0 px-4 py-2.5 border-b border-black/5 dark:border-white/5 bg-white dark:bg-[#2a2a2a]">
+   689→        <div className="text-[10px] text-[#7a7a7a] dark:text-[#9a9a9a] mb-1">监控视频</div>
+   690→        <div className="flex items-center gap-2">
+   691→          <Video className="w-4 h-4 text-purple-500 shrink-0" />
+   692→          <span className="text-[12px] font-medium flex-1 truncate">{vi.monitoringVideo}</span>
+   693→          <span className="text-[10px] font-mono text-purple-600">▶ {(vi.monitoringPlayCount / 10000).toFixed(1)}w</span>
+   694→          <button
+   695→            onClick={scanVideoComments}
+   696→            disabled={!vi.enabled}
+   697→            className="px-2 py-1 text-[10px] rounded bg-purple-500/10 text-purple-600 hover:bg-purple-500/20 disabled:opacity-30"
+   698→          >
+   699→            重新扫描
+   700→          </button>
+   701→        </div>
+   702→        {/* 高播放量优先开关 */}
+   703→        <div className="flex items-center gap-2 mt-2">
+   704→          <button
+   705→            onClick={toggleVideoPrioritySort}
+   706→            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-medium transition-colors ${
+   707→              videoPrioritySort ? 'bg-purple-500/15 text-purple-600' : 'bg-muted text-muted-foreground'
+   708→            }`}
+   709→          >
+   710→            <span className={`w-1.5 h-1.5 rounded-full ${videoPrioritySort ? 'bg-purple-500' : 'bg-muted-foreground'}`} />
+   711→            高播放量优先
+   712→          </button>
+   713→          <span className="text-[9px] text-[#7a7a7a] dark:text-[#9a9a9a]">
+   714→            {videoPrioritySort ? '按视频播放量降序处理评论' : '按时间顺序处理'}
+   715→          </span>
+   716→        </div>
+   717→      </div>
+   718→
+   719→      {/* 统计 */}
+   720→      <div className="shrink-0 grid grid-cols-3 gap-px bg-black/5">
+   721→        <div className="bg-white p-2.5 text-center">
+   722→          <div className="text-[18px] font-bold font-mono text-zinc-600">{vi.commentsDetected}</div>
+   723→          <div className="text-[9px] text-[#7a7a7a] dark:text-[#9a9a9a]">评论检测</div>
+   724→        </div>
+   725→        <div className="bg-white p-2.5 text-center">
+   726→          <div className="text-[18px] font-bold font-mono text-rose-500">{vi.highIntentFound}</div>
+   727→          <div className="text-[9px] text-[#7a7a7a] dark:text-[#9a9a9a]">高意向客户</div>
+   728→        </div>
+   729→        <div className="bg-white p-2.5 text-center">
+   730→          <div className="text-[18px] font-bold font-mono text-emerald-500">{vi.dmSent}</div>
+   731→          <div className="text-[9px] text-[#7a7a7a] dark:text-[#9a9a9a]">已发私信</div>
+   732→        </div>
+   733→      </div>
+   734→
+   735→      {/* 批量操作 */}
+   736→      {highIntentTargets.filter(t => t.dmStatus === 'pending').length > 0 && (
+   737→        <div className="shrink-0 px-4 py-2 border-b border-black/5 dark:border-white/5">
+   738→          <button
+   739→            onClick={handleBatchSend}
+   740→            className="w-full py-2 rounded-lg bg-emerald-500/10 text-emerald-600 text-[11px] font-medium hover:bg-emerald-500/20 transition-colors apple-btn"
+   741→          >
+   742→            一键私信全部高意向客户 ({highIntentTargets.filter(t => t.dmStatus === 'pending').length}个)
+   743→          </button>
+   744→        </div>
+   745→      )}
+   746→
+   747→      {/* 高意向客户列表 */}
+   748→      <div className="flex-1 min-h-0 overflow-y-auto waos-scrollbar">
+   749→        {highIntentTargets.length > 0 && (
+   750→          <div className="px-3 py-1.5 text-[10px] font-semibold text-rose-500 bg-rose-50/50">🔥 高意向客户 ({highIntentTargets.length})</div>
+   751→        )}
+   752→        {highIntentTargets.map(t => (
+   753→          <InterceptTarget key={t.id} target={t} onSend={handleSendDM} sending={sendingId === t.id} />
+   754→        ))}
+   755→
+   756→        {lowIntentTargets.length > 0 && (
+   757→          <div className="px-3 py-1.5 text-[10px] font-semibold text-[#7a7a7a] dark:text-[#9a9a9a] bg-gray-50">低意向 ({lowIntentTargets.length})</div>
+   758→        )}
+   759→        {lowIntentTargets.map(t => (
+   760→          <InterceptTarget key={t.id} target={t} onSend={handleSendDM} sending={sendingId === t.id} />
+   761→        ))}
+   762→      </div>
+   763→    </div>
+   764→  )
+   765→}
+   766→
+   767→function InterceptTarget({ target, onSend, sending }: { target: InterceptTargetType; onSend: (id: string) => void; sending: boolean }) {
+   768→  const [showDM, setShowDM] = useState(false)
+   769→  const scoreColor = target.intentScore >= 90 ? 'text-rose-500' : target.intentScore >= 70 ? 'text-amber-500' : 'text-[#7a7a7a] dark:text-[#9a9a9a]'
+   770→
+   771→  return (
+   772→    <div className="px-3 py-2.5 border-b border-black/5 dark:border-white/5">
+   773→      <div className="flex items-start gap-2.5">
+   774→        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-purple-400 to-pink-500 flex items-center justify-center text-[13px] font-semibold text-white shrink-0">
+   775→          {target.avatar}
+   776→        </div>
+   777→        <div className="flex-1 min-w-0">
+   778→          <div className="flex items-center gap-1.5">
+   779→            <span className="text-[12px] font-medium">{target.userName}</span>
+   780→            <span className={`text-[9px] font-mono font-bold ${scoreColor}`}>{target.intentScore}分</span>
+   781→            {target.dmStatus === 'sent' && <span className="text-[8px] px-1 rounded bg-emerald-100 text-emerald-600">已私信</span>}
+   782→            {target.dmStatus === 'replied' && <span className="text-[8px] px-1 rounded bg-sky-100 text-sky-600">已回复</span>}
+   783→          </div>
+   784→          <div className="text-[11px] text-[#576b95] mt-0.5">"{target.comment}"</div>
+   785→          <div className="text-[9px] text-[#7a7a7a] dark:text-[#9a9a9a] mt-0.5 flex items-center gap-2">
+   786→            <span>📋 {target.intentReason}</span>
+   787→            {target.videoPlayCount > 0 && (
+   788→              <span className="text-purple-600 font-medium">▶ {(target.videoPlayCount / 10000).toFixed(1)}w</span>
+   789→            )}
+   790→          </div>
+   791→
+   792→          {/* 私信内容预览 */}
+   793→          {showDM && target.dmMessage && (
+   794→            <div className="mt-1.5 p-2 rounded-lg bg-emerald-50 border border-emerald-100">
+   795→              <div className="text-[9px] text-emerald-600 font-semibold mb-0.5">📨 私信内容:</div>
+   796→              <div className="text-[11px] text-black leading-relaxed">{target.dmMessage}</div>
+   797→            </div>
+   798→          )}
+   799→
+   800→          {/* 操作按钮 */}
+   801→          <div className="flex items-center gap-1.5 mt-1.5">
+   802→            {target.dmStatus === 'pending' ? (
+   803→              <button
+   804→                onClick={() => onSend(target.id)}
+   805→                disabled={sending}
+   806→                className="px-2.5 py-1 text-[10px] rounded bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 apple-btn"
+   807→              >
+   808→                {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : '私信他'}
+   809→              </button>
+   810→            ) : (
+   811→              <button
+   812→                onClick={() => setShowDM(!showDM)}
+   813→                className="px-2 py-1 text-[10px] rounded bg-gray-100 text-[#7a7a7a] dark:text-[#9a9a9a] hover:bg-gray-200"
+   814→              >
+   815→                {showDM ? '收起' : '查看私信'}
+   816→              </button>
+   817→            )}
+   818→          </div>
+   819→        </div>
+   820→      </div>
+   821→    </div>
+   822→  )
+   823→}
+   824→
+   825→// ─── 工具 ────────────────────────────────────────────────────
+   826→function sourceLabel(source: string): string {
+   827→  return { wechat_dm: '微信私聊', comment: '评论', video: '视频号', douyin: '抖音' }[source] || source
+   828→}
+   829→
+   830→function convTime(iso: string): string {
+   831→  const d = new Date(iso)
+   832→  const today = new Date()
+   833→  if (d.toDateString() === today.toDateString()) {
+   834→    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+   835→  }
+   836→  const yesterday = new Date(today)
+   837→  yesterday.setDate(yesterday.getDate() - 1)
+   838→  if (d.toDateString() === yesterday.toDateString()) return '昨天'
+   839→  return `${d.getMonth() + 1}/${d.getDate()}`
+   840→}
+   841→
+   842→function formatTimeAgo(ts: number): string {
+   843→  const diff = Date.now() - ts
+   844→  if (diff < 60000) return '刚刚'
+   845→  if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`
+   846→  if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`
+   847→  return `${Math.floor(diff / 86400000)}天前`
+   848→}
+   849→

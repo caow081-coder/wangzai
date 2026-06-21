@@ -1,0 +1,859 @@
+     1→'use client'
+     2→
+     3→import { useOpsStore } from '@/store/useOpsStore'
+     4→import {
+     5→  Sparkles, Flame, TrendingUp, Clock, Tag, ChevronRight,
+     6→  MessageSquare, ArrowUpRight, Hand, CheckCircle2, Bot, User, Shield,
+     7→  Star, Zap, Eye, AlertTriangle, Cpu, Loader2,
+     8→} from 'lucide-react'
+     9→import { toast } from 'sonner'
+    10→import { useState } from 'react'
+    11→
+    12→export function DecisionPanel() {
+    13→  const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
+    14→
+    15→  return (
+    16→    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+    17→      {/* 顶部固定监控条 */}
+    18→      <MonitorBar />
+    19→
+    20→      {/* 压测监控面板（可折叠，始终显示） */}
+    21→      <StressMonitorPanel />
+    22→
+    23→      {/* 滚动区域 */}
+    24→      <div className="flex-1 min-h-0 overflow-y-auto waos-scrollbar">
+    25→        {!lead ? <EmptyState /> : (
+    26→          <>
+    27→            {/* 客户头部 */}
+    28→            <LeadHeader />
+    29→
+    30→        {/* SalesCopilot (AI 副驾 4字段) */}
+    31→        <SalesCopilot />
+    32→
+    33→        {/* 成交/流失预测 */}
+    34→        <Predictions />
+    35→
+    36→        {/* 快捷动作（提到前面）*/}
+    37→        <Actions />
+    38→
+    39→        {/* 推荐话术（提到前面）*/}
+    40→        <ReplySuggestions />
+    41→
+    42→        {/* 客户记忆 L1-L4 */}
+    43→        <CustomerMemory />
+    44→
+    45→        {/* WHY THIS DECISION */}
+    46→        <WhyDecision />
+    47→
+    48→        {/* 状态机 */}
+    49→        <StateMachine />
+    50→
+    51→        {/* Persona */}
+    52→        <PersonaCard />
+    53→          </>
+    54→        )}
+    55→      </div>
+    56→    </div>
+    57→  )
+    58→}
+    59→
+    60→function EmptyState() {
+    61→  return (
+    62→    <div className="flex flex-col items-center justify-center h-full text-center px-8">
+    63→      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center mb-4 shadow-sm">
+    64→        <Sparkles className="w-7 h-7 text-white" />
+    65→      </div>
+    66→      <h3 className="text-[15px] font-semibold mb-1">WAOS 决策面板</h3>
+    67→      <p className="text-[12px] text-muted-foreground max-w-[240px] leading-relaxed">
+    68→        从左侧微信客户端选择一位客户，查看 AI 决策依据、状态流转、推荐话术
+    69→      </p>
+    70→    </div>
+    71→  )
+    72→}
+    73→
+    74→// ─── 顶部固定监控条 ──────────────────────────────────────────
+    75→function MonitorBar() {
+    76→  const metrics = useOpsStore(s => s.metrics)
+    77→  const circuitState = useOpsStore(s => s.llmCircuitState)
+    78→  const handoffCount = useOpsStore(s => s.handoffQueue.length)
+    79→  const antiBan = useOpsStore(s => s.antiBanStats)
+    80→  const eventBus = useOpsStore(s => s.eventBusStats)
+    81→  const openProDrawer = useOpsStore(s => s.openProDrawer)
+    82→
+    83→  return (
+    84→    <div className="shrink-0 grid grid-cols-5 gap-px bg-border/40 border-b border-border/60">
+    85→      {/* HOT */}
+    86→      <button
+    87→        onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'scheduler' })) }}
+    88→        className="bg-card px-2 py-2.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
+    89→      >
+    90→        <div className={`text-[20px] font-bold font-mono leading-none ${metrics.hotCount > 0 ? 'text-rose-500' : 'text-muted-foreground'}`}>
+    91→          {metrics.hotCount}
+    92→        </div>
+    93→        <div className="text-[9px] text-muted-foreground mt-1">热门</div>
+    94→      </button>
+    95→
+    96→      {/* 队列 */}
+    97→      <button
+    98→        onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'scheduler' })) }}
+    99→        className="bg-card px-2 py-2.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
+   100→      >
+   101→        <div className={`text-[20px] font-bold font-mono leading-none ${metrics.queueDepth > 10 ? 'text-amber-500' : 'text-foreground'}`}>
+   102→          {metrics.queueDepth}
+   103→        </div>
+   104→        <div className="text-[9px] text-muted-foreground mt-1">队列</div>
+   105→      </button>
+   106→
+   107→      {/* AI 熔断 */}
+   108→      <button
+   109→        onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'ai' })) }}
+   110→        className="bg-card px-2 py-2.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
+   111→      >
+   112→        <div className={`text-[14px] font-bold font-mono leading-none ${
+   113→          circuitState === 'open' ? 'text-rose-500' :
+   114→          circuitState === 'half-open' ? 'text-amber-500' : 'text-emerald-500'
+   115→        }`}>
+   116→          {circuitState === 'open' ? '熔断' : circuitState === 'half-open' ? '探测' : '正常'}
+   117→        </div>
+   118→        <div className="text-[9px] text-muted-foreground mt-1">AI</div>
+   119→      </button>
+   120→
+   121→      {/* 人工接管 */}
+   122→      <button
+   123→        onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'channel' })) }}
+   124→        className="bg-card px-2 py-2.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
+   125→      >
+   126→        <div className={`text-[20px] font-bold font-mono leading-none ${handoffCount > 0 ? 'text-orange-500' : 'text-muted-foreground'}`}>
+   127→          {handoffCount}
+   128→        </div>
+   129→        <div className="text-[9px] text-muted-foreground mt-1">接管</div>
+   130→      </button>
+   131→
+   132→      {/* 事件总线 */}
+   133→      <button
+   134→        onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'infra' })) }}
+   135→        className="bg-card px-2 py-2.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
+   136→      >
+   137→        <div className={`text-[20px] font-bold font-mono leading-none ${eventBus.pending > 10 ? 'text-amber-500' : 'text-foreground'}`}>
+   138→          {eventBus.pending}
+   139→        </div>
+   140→        <div className="text-[9px] text-muted-foreground mt-1">待处理</div>
+   141→      </button>
+   142→    </div>
+   143→  )
+   144→}
+   145→
+   146→// ─── SalesCopilot AI 副驾（4字段）────────────────────────────
+   147→function SalesCopilot() {
+   148→  const copilot = useOpsStore(s => s.salesCopilot)
+   149→  if (!copilot) return null
+   150→
+   151→  const probColor = copilot.dealProbability >= 70 ? 'text-emerald-600' : copilot.dealProbability >= 40 ? 'text-amber-600' : 'text-muted-foreground'
+   152→  const probBg = copilot.dealProbability >= 70 ? 'bg-emerald-500' : copilot.dealProbability >= 40 ? 'bg-amber-500' : 'bg-muted'
+   153→
+   154→  return (
+   155→    <div className="p-4 border-b border-border/60">
+   156→      <div className="flex items-center gap-2 mb-3">
+   157→        <div className="w-5 h-5 rounded-md bg-primary/10 flex items-center justify-center">
+   158→          <Bot className="w-3 h-3 text-primary" />
+   159→        </div>
+   160→        <h3 className="text-[12px] font-semibold">AI 副驾</h3>
+   161→        <span className="text-[9px] text-muted-foreground">决策依据</span>
+   162→      </div>
+   163→
+   164→      {/* 成交概率大数字 */}
+   165→      <div className="p-3 rounded-xl bg-secondary/50 mb-2">
+   166→        <div className="flex items-baseline justify-between mb-1.5">
+   167→          <span className="text-[11px] text-muted-foreground">成交概率</span>
+   168→          <span className={`text-[24px] font-bold ${probColor}`}>{copilot.dealProbability}%</span>
+   169→        </div>
+   170→        <div className="h-2 bg-muted rounded-full overflow-hidden">
+   171→          <div className={`h-full rounded-full ${probBg} transition-all duration-500`} style={{ width: `${copilot.dealProbability}%` }} />
+   172→        </div>
+   173→      </div>
+   174→
+   175→      {/* 3字段网格 */}
+   176→      <div className="grid grid-cols-1 gap-1.5">
+   177→        <div className="flex items-center gap-2 p-2 rounded-lg bg-secondary/50">
+   178→          <span className="text-[10px] text-muted-foreground w-14">当前阶段</span>
+   179→          <span className="text-[11px] font-semibold flex-1">{copilot.stage}</span>
+   180→        </div>
+   181→        <div className="flex items-center gap-2 p-2 rounded-lg bg-secondary/50">
+   182→          <span className="text-[10px] text-muted-foreground w-14">推荐策略</span>
+   183→          <span className="text-[11px] font-semibold flex-1 text-primary">{copilot.strategy}</span>
+   184→        </div>
+   185→        <div className="flex items-center gap-2 p-2 rounded-lg bg-secondary/50">
+   186→          <span className="text-[10px] text-muted-foreground w-14">下一步</span>
+   187→          <span className="text-[11px] font-semibold flex-1">{copilot.nextAction}</span>
+   188→        </div>
+   189→      </div>
+   190→
+   191→      {/* 风险 + 案例 */}
+   192→      {copilot.riskFlag && (
+   193→        <div className="mt-2 flex items-center gap-1.5 text-[10px] text-rose-600">
+   194→          <AlertTriangle className="w-3 h-3" />
+   195→          <span>风险: {copilot.riskFlag}</span>
+   196→        </div>
+   197→      )}
+   198→      {copilot.recommendedCase && (
+   199→        <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-emerald-600">
+   200→          <CheckCircle2 className="w-3 h-3" />
+   201→          <span>推荐案例: {copilot.recommendedCase}</span>
+   202→        </div>
+   203→      )}
+   204→    </div>
+   205→  )
+   206→}
+   207→
+   208→// ─── 成交/流失预测 ───────────────────────────────────────────
+   209→function Predictions() {
+   210→  const pred = useOpsStore(s => s.predictions)
+   211→  if (!pred) return null
+   212→
+   213→  return (
+   214→    <div className="p-4 border-b border-border/60">
+   215→      <div className="flex items-center gap-2 mb-3">
+   216→        <div className="w-5 h-5 rounded-md bg-purple-500/10 flex items-center justify-center">
+   217→          <TrendingUp className="w-3 h-3 text-purple-500" />
+   218→        </div>
+   219→        <h3 className="text-[12px] font-semibold">预测分析</h3>
+   220→      </div>
+   221→
+   222→      <div className="grid grid-cols-2 gap-2">
+   223→        <div className="p-2.5 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
+   224→          <div className="text-[10px] text-muted-foreground">成交概率</div>
+   225→          <div className="text-[18px] font-bold text-emerald-600 mt-0.5">{pred.dealProbability}%</div>
+   226→        </div>
+   227→        <div className="p-2.5 rounded-xl bg-rose-500/5 border border-rose-500/20">
+   228→          <div className="text-[10px] text-muted-foreground">流失概率</div>
+   229→          <div className="text-[18px] font-bold text-rose-600 mt-0.5">{pred.churnProbability}%</div>
+   230→        </div>
+   231→      </div>
+   232→
+   233→      <div className="mt-2 space-y-1 text-[11px]">
+   234→        <div className="flex items-center justify-between p-1.5 rounded bg-secondary/50">
+   235→          <span className="text-muted-foreground">最佳联系时间</span>
+   236→          <span className="font-semibold">{pred.bestContactTime}</span>
+   237→        </div>
+   238→        <div className="flex items-center justify-between p-1.5 rounded bg-secondary/50">
+   239→          <span className="text-muted-foreground">预估价值</span>
+   240→          <span className="font-semibold text-emerald-600">¥{pred.estimatedValue}</span>
+   241→        </div>
+   242→      </div>
+   243→    </div>
+   244→  )
+   245→}
+   246→
+   247→// ─── 客户记忆 L1-L4 ──────────────────────────────────────────
+   248→function CustomerMemory() {
+   249→  const mem = useOpsStore(s => s.customerMemory)
+   250→  if (!mem) return null
+   251→
+   252→  return (
+   253→    <div className="p-4 border-b border-border/60">
+   254→      <div className="flex items-center gap-2 mb-3">
+   255→        <div className="w-5 h-5 rounded-md bg-sky-500/10 flex items-center justify-center">
+   256→          <Eye className="w-3 h-3 text-sky-500" />
+   257→        </div>
+   258→        <h3 className="text-[12px] font-semibold">客户记忆</h3>
+   259→        <span className="text-[9px] text-muted-foreground ml-auto">4层引擎</span>
+   260→      </div>
+   261→
+   262→      {/* L1 短期记忆 */}
+   263→      <div className="mb-2">
+   264→        <div className="text-[10px] text-muted-foreground mb-1">L1 短期（最近{mem.l1_short.length}条）</div>
+   265→        <div className="space-y-0.5 max-h-20 overflow-y-auto waos-scrollbar">
+   266→          {mem.l1_short.slice(-5).map((m, i) => (
+   267→            <div key={i} className="text-[10px] truncate">
+   268→              <span className={`font-medium ${m.role === 'user' ? 'text-foreground' : 'text-primary'}`}>
+   269→                {m.role === 'user' ? '客户' : m.role === 'human' ? '人工' : 'AI'}:
+   270→              </span>
+   271→              <span className="text-muted-foreground ml-1">{m.content.slice(0, 40)}</span>
+   272→            </div>
+   273→          ))}
+   274→        </div>
+   275→      </div>
+   276→
+   277→      {/* L2 长期画像 */}
+   278→      {mem.l2_profile.length > 0 && (
+   279→        <div className="mb-2">
+   280→          <div className="text-[10px] text-muted-foreground mb-1">L2 画像</div>
+   281→          <div className="flex flex-wrap gap-1">
+   282→            {mem.l2_profile.map((p, i) => (
+   283→              <span key={i} className="text-[9px] px-1.5 py-0.5 rounded bg-secondary text-foreground">{p.key}: {p.value}</span>
+   284→            ))}
+   285→          </div>
+   286→        </div>
+   287→      )}
+   288→
+   289→      {/* L3 语义记忆 */}
+   290→      {mem.l3_semantic.length > 0 && (
+   291→        <div className="mb-2">
+   292→          <div className="text-[10px] text-muted-foreground mb-1">L3 语义检索</div>
+   293→          {mem.l3_semantic.map((s, i) => (
+   294→            <div key={i} className="text-[10px] p-1.5 rounded bg-sky-500/5 border border-sky-500/20">
+   295→              <span className="text-foreground">{s.memory}</span>
+   296→              <span className="text-[9px] text-muted-foreground ml-1">({(s.score * 100).toFixed(0)}%)</span>
+   297→            </div>
+   298→          ))}
+   299→        </div>
+   300→      )}
+   301→
+   302→      {/* L4 决策记忆 */}
+   303→      {mem.l4_decision.length > 0 && (
+   304→        <div>
+   305→          <div className="text-[10px] text-muted-foreground mb-1">L4 决策记忆</div>
+   306→          {mem.l4_decision.map((d, i) => (
+   307→            <div key={i} className="text-[10px] flex items-center gap-1.5 p-1.5 rounded bg-emerald-500/5 border border-emerald-500/20">
+   308→              <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+   309→              <span className="text-foreground">{d.strategy}</span>
+   310→              <span className="text-emerald-600 font-semibold">{d.result}</span>
+   311→            </div>
+   312→          ))}
+   313→        </div>
+   314→      )}
+   315→    </div>
+   316→  )
+   317→}
+   318→
+   319→// ─── 压测监控面板 ────────────────────────────────────────────
+   320→function StressMonitorPanel() {
+   321→  const sm = useOpsStore(s => s.stressMonitor)
+   322→  const startStressMonitor = useOpsStore(s => s.startStressMonitor)
+   323→  const stopStressMonitor = useOpsStore(s => s.stopStressMonitor)
+   324→  const [expanded, setExpanded] = useState(false)
+   325→
+   326→  const durationMin = sm.startedAt ? Math.floor((Date.now() - sm.startedAt) / 60000) : 0
+   327→  const intervalMin = Math.floor(sm.intervalMs / 60000)
+   328→  const lastRoundAgo = sm.lastRoundAt ? Math.floor((Date.now() - sm.lastRoundAt) / 1000) : 0
+   329→
+   330→  return (
+   331→    <div className="shrink-0 border-b border-border/60 bg-card">
+   332→      {/* 头部条 */}
+   333→      <div className="px-3 py-2 flex items-center gap-2">
+   334→        <div className={`w-2 h-2 rounded-full ${sm.running ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground/30'}`} />
+   335→        <span className="text-[11px] font-semibold">压测监控</span>
+   336→        {sm.running && (
+   337→          <span className="text-[9px] font-mono text-muted-foreground">
+   338→            第{sm.currentRound}轮 · {durationMin}分钟 · 每{intervalMin}分钟
+   339→          </span>
+   340→        )}
+   341→        <div className="flex-1" />
+   342→        {sm.running ? (
+   343→          <button onClick={stopStressMonitor} className="px-2 py-0.5 text-[10px] rounded bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 apple-btn">
+   344→            停止
+   345→          </button>
+   346→        ) : (
+   347→          <button onClick={startStressMonitor} className="px-2 py-0.5 text-[10px] rounded bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 apple-btn">
+   348→            启动压测
+   349→          </button>
+   350→        )}
+   351→        <button onClick={() => setExpanded(!expanded)} className="p-0.5 text-muted-foreground hover:text-foreground">
+   352→          <ChevronRight className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+   353→        </button>
+   354→      </div>
+   355→
+   356→      {/* 统计行（始终显示） */}
+   357→      {sm.currentRound > 0 && (
+   358→        <div className="px-3 pb-2 flex items-center gap-3 text-[10px] font-mono">
+   359→          <span className="text-emerald-600">✅{sm.totalPass}</span>
+   360→          <span className={sm.totalFail > 0 ? 'text-rose-600' : 'text-muted-foreground'}>❌{sm.totalFail}</span>
+   361→          <span className="text-amber-600">⚠️{sm.totalWarn}</span>
+   362→          <span className="text-muted-foreground ml-auto">{lastRoundAgo}秒前</span>
+   363→        </div>
+   364→      )}
+   365→
+   366→      {/* 展开详情 */}
+   367→      {expanded && (
+   368→        <div className="px-3 pb-3 space-y-2">
+   369→          {/* 上一轮结果 */}
+   370→          {sm.lastRoundResults.length > 0 && (
+   371→            <div>
+   372→              <div className="text-[9px] font-semibold text-muted-foreground uppercase mb-1">第{sm.currentRound}轮结果 ({sm.lastRoundResults.length}项)</div>
+   373→              <div className="space-y-0.5 max-h-40 overflow-y-auto waos-scrollbar">
+   374→                {sm.lastRoundResults.map((r, i) => (
+   375→                  <div key={i} className="flex items-center gap-1.5 text-[10px] font-mono">
+   376→                    <span className={r.status === 'PASS' ? 'text-emerald-500' : r.status === 'FAIL' ? 'text-rose-500' : 'text-amber-500'}>
+   377→                      {r.status === 'PASS' ? '✅' : r.status === 'FAIL' ? '❌' : '⚠️'}
+   378→                    </span>
+   379→                    <span className="text-muted-foreground w-12">{r.category}</span>
+   380→                    <span className="text-foreground flex-1 truncate">{r.test}</span>
+   381→                    <span className="text-muted-foreground truncate max-w-[120px]">{r.detail}</span>
+   382→                  </div>
+   383→                ))}
+   384→              </div>
+   385→            </div>
+   386→          )}
+   387→
+   388→          {/* 历史趋势 */}
+   389→          {sm.history.length > 1 && (
+   390→            <div>
+   391→              <div className="text-[9px] font-semibold text-muted-foreground uppercase mb-1">历史趋势 (最近{sm.history.length}轮)</div>
+   392→              <div className="flex items-end gap-0.5 h-12">
+   393→                {sm.history.map((h, i) => {
+   394→                  const total = h.pass + h.fail + h.warn
+   395→                  const passPct = total > 0 ? (h.pass / total) * 100 : 0
+   396→                  const hasFail = h.fail > 0
+   397→                  return (
+   398→                    <div key={i} className="flex-1 flex flex-col items-center" title={`第${h.round}轮: ✅${h.pass} ❌${h.fail} ${h.duration}ms`}>
+   399→                      <div className={`w-full rounded-sm ${hasFail ? 'bg-rose-500/60' : 'bg-emerald-500/60'}`} style={{ height: `${Math.max(4, passPct * 0.4)}px` }} />
+   400→                      <span className="text-[7px] text-muted-foreground mt-0.5">{h.round}</span>
+   401→                    </div>
+   402→                  )
+   403→                })}
+   404→              </div>
+   405→            </div>
+   406→          )}
+   407→
+   408→          {/* 错误列表 */}
+   409→          {sm.errors.length > 0 && (
+   410→            <div>
+   411→              <div className="text-[9px] font-semibold text-rose-500 uppercase mb-1">错误记录 ({sm.errors.length})</div>
+   412→              <div className="space-y-0.5 max-h-20 overflow-y-auto waos-scrollbar">
+   413→                {sm.errors.slice(-10).map((e, i) => (
+   414→                  <div key={i} className="text-[9px] font-mono text-rose-600">
+   415→                    [R{e.round}] {e.category}/{e.test}: {e.msg}
+   416→                  </div>
+   417→                ))}
+   418→              </div>
+   419→            </div>
+   420→          )}
+   421→
+   422→          {/* 说明 */}
+   423→          <div className="text-[9px] text-muted-foreground pt-1 border-t border-border/40">
+   424→            真实时间压测 · 每{intervalMin}分钟自动执行一轮 · 每轮覆盖12个维度(页面/AI/安全11项/渠道/LLM/逆向/API/并发/攻击向量10项) · 不停运行直到手动停止
+   425→          </div>
+   426→        </div>
+   427→      )}
+   428→    </div>
+   429→  )
+   430→}
+   431→
+   432→// ─── 客户头部 ────────────────────────────────────────────────
+   433→function LeadHeader() {
+   434→  const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
+   435→  if (!lead) return null
+   436→
+   437→  const isHot = lead.stage === 'hot'
+   438→  const isConverted = lead.stage === 'converted'
+   439→
+   440→  return (
+   441→    <div className="p-4 border-b border-border/60">
+   442→      <div className="flex items-start gap-3">
+   443→        <div
+   444→          className="w-12 h-12 rounded-2xl flex items-center justify-center text-[16px] font-semibold text-white shrink-0 shadow-sm"
+   445→          style={{ background: lead.personaColor || '#86868b' }}
+   446→        >
+   447→          {lead.userName.slice(0, 1)}
+   448→        </div>
+   449→        <div className="flex-1 min-w-0">
+   450→          <div className="flex items-center gap-1.5">
+   451→            <h2 className="text-[16px] font-semibold truncate">{lead.userName}</h2>
+   452→            {isHot && <Flame className="w-4 h-4 text-rose-500" />}
+   453→            {isConverted && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+   454→          </div>
+   455→          <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground">
+   456→            <span>{sourceLabel(lead.source)}</span>
+   457→            <span>·</span>
+   458→            <span>意向{lead.priorityScore.toFixed(0)}分</span>
+   459→            <span>·</span>
+   460→            <span className="flex items-center gap-0.5">
+   461→              <Clock className="w-2.5 h-2.5" />
+   462→              {timeAgo(lead.lastTouchAt)}
+   463→            </span>
+   464→          </div>
+   465→        </div>
+   466→        <div className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+   467→          isHot ? 'bg-rose-500/10 text-rose-600' :
+   468→          isConverted ? 'bg-emerald-500/10 text-emerald-600' :
+   469→          lead.stage === 'blocked' ? 'bg-amber-500/10 text-amber-600' :
+   470→          'bg-secondary text-muted-foreground'
+   471→        }`}>
+   472→          {stageLabel(lead.stage)}
+   473→        </div>
+   474→      </div>
+   475→
+   476→      {lead.tags.length > 0 && (
+   477→        <div className="flex flex-wrap gap-1.5 mt-3">
+   478→          {lead.tags.map(t => {
+   479→            // 英文标签翻译成中文
+   480→            const tagMap: Record<string, string> = {
+   481→              'high_intent': '意向高',
+   482→              'price_sensitive': '价格敏感',
+   483→              'high_value': '高价值',
+   484→              'product_education': '需科普',
+   485→              'referral': '转介绍',
+   486→              'converted': '已成交',
+   487→            }
+   488→            const label = tagMap[t] || t
+   489→            return (
+   490→              <span key={t} className="text-[10px] px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium">
+   491→                #{label}
+   492→              </span>
+   493→            )
+   494→          })}
+   495→        </div>
+   496→      )}
+   497→    </div>
+   498→  )
+   499→}
+   500→
+   501→// ─── WHY THIS DECISION ───────────────────────────────────────
+   502→function WhyDecision() {
+   503→  const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
+   504→  if (!lead) return null
+   505→
+   506→  const f = lead.features
+   507→  const reasons = [
+   508→    { label: '意图极强', value: f.intent, score: lead.intentScore, icon: <TrendingUp className="w-3 h-3" />, positive: f.intent > 20 },
+   509→    { label: '高价值标签', value: f.value, score: lead.valueScore, icon: <Tag className="w-3 h-3" />, positive: f.value > 20 },
+   510→    { label: '阶段分', value: f.stage, score: null, icon: <Star className="w-3 h-3" />, positive: f.stage > 15 },
+   511→    { label: '人设匹配', value: f.persona, score: null, icon: <Bot className="w-3 h-3" />, positive: f.persona > 5 },
+   512→    { label: '最近活跃', value: f.recency, score: null, icon: <Clock className="w-3 h-3" />, positive: f.recency > 50 },
+   513→    { label: '渠道权重', value: f.channel, score: null, icon: <Zap className="w-3 h-3" />, positive: f.channel > 50 },
+   514→  ].filter(r => r.positive)
+   515→
+   516→  return (
+   517→    <div className="p-4 border-b border-border/60">
+   518→      <div className="flex items-center gap-2 mb-3">
+   519→        <div className="w-5 h-5 rounded-md bg-primary/10 flex items-center justify-center">
+   520→          <Eye className="w-3 h-3 text-primary" />
+   521→        </div>
+   522→        <h3 className="text-[12px] font-semibold tracking-wide">AI 为什么这么回复？</h3>
+   523→        <span className="text-[10px] text-muted-foreground ml-auto">意向{lead.priorityScore.toFixed(0)}分 · 关键因素</span>
+   524→      </div>
+   525→
+   526→      <ul className="space-y-1.5">
+   527→        {reasons.length > 0 ? reasons.map((r, i) => (
+   528→          <li key={i} className="flex items-center gap-2 text-[12px]">
+   529→            <span className="text-primary">{r.icon}</span>
+   530→            <span className="flex-1">{r.label}</span>
+   531→            {r.score !== null && (
+   532→              <span className="text-[10px] text-muted-foreground font-mono">分值: {r.score.toFixed(0)}</span>
+   533→            )}
+   534→            <span className="text-[10px] font-mono font-semibold text-primary">+{r.value.toFixed(1)}</span>
+   535→          </li>
+   536→        )) : (
+   537→          <li className="text-[11px] text-muted-foreground">暂无正向特征</li>
+   538→        )}
+   539→      </ul>
+   540→
+   541→      {f.penalty < 0 && (
+   542→        <div className="mt-2 flex items-center gap-2 text-[11px] text-rose-600">
+   543→          <Shield className="w-3 h-3" />
+   544→          <span>扣分: {f.penalty.toFixed(1)} {lead.isSpam ? '(广告号)' : lead.alreadyCustomer ? '(已购客户)' : ''}</span>
+   545→        </div>
+   546→      )}
+   547→    </div>
+   548→  )
+   549→}
+   550→
+   551→// ─── 状态机 ──────────────────────────────────────────────────
+   552→function StateMachine() {
+   553→  const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
+   554→  if (!lead) return null
+   555→
+   556→  const flow = [
+   557→    { id: 'new', label: '新客户' },
+   558→    { id: 'engaged', label: '沟通中' },
+   559→    { id: 'qualified', label: '意向高' },
+   560→    { id: 'hot', label: '热门' },
+   561→    { id: 'converted', label: '已成交' },
+   562→  ]
+   563→  const currentIdx = flow.findIndex(s => s.id === lead.stage)
+   564→  const isChurned = lead.stage === 'churned'
+   565→  const isBlocked = lead.stage === 'blocked'
+   566→
+   567→  return (
+   568→    <div className="p-4 border-b border-border/60">
+   569→      <div className="flex items-center gap-2 mb-3">
+   570→        <div className="w-5 h-5 rounded-md bg-sky-500/10 flex items-center justify-center">
+   571→          <ChevronRight className="w-3 h-3 text-sky-500" />
+   572→        </div>
+   573→        <h3 className="text-[12px] font-semibold tracking-wide">客户阶段</h3>
+   574→        {(isChurned || isBlocked) && (
+   575→          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ml-auto ${
+   576→            isBlocked ? 'bg-amber-500/10 text-amber-600' : 'bg-muted text-muted-foreground'
+   577→          }`}>
+   578→            {isBlocked ? '人工接管' : '已流失'}
+   579→          </span>
+   580→        )}
+   581→      </div>
+   582→
+   583→      <div className="flex items-center gap-0.5 overflow-x-auto waos-scrollbar-x">
+   584→        {flow.map((s, i) => {
+   585→          const isPast = currentIdx > i
+   586→          const isCurrent = currentIdx === i
+   587→          return (
+   588→            <div key={s.id} className="flex items-center shrink-0">
+   589→              <div className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all ${
+   590→                isCurrent ? 'bg-primary text-primary-foreground shadow-sm' :
+   591→                isPast ? 'bg-primary/10 text-primary/70' :
+   592→                'bg-muted/50 text-muted-foreground'
+   593→              }`}>
+   594→                {s.label}
+   595→              </div>
+   596→              {i < flow.length - 1 && (
+   597→                <ChevronRight className={`w-3 h-3 mx-0.5 ${isPast ? 'text-primary/40' : 'text-muted-foreground/30'}`} />
+   598→              )}
+   599→            </div>
+   600→          )
+   601→        })}
+   602→      </div>
+   603→    </div>
+   604→  )
+   605→}
+   606→
+   607→// ─── Persona ────────────────────────────────────────────────
+   608→function PersonaCard() {
+   609→  const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
+   610→  const activePersonaId = useOpsStore(s => s.activePersonaId)
+   611→  const personas = useOpsStore(s => s.personas)
+   612→  const setActivePersona = useOpsStore(s => s.setActivePersona)
+   613→  const openPersonaEditor = useOpsStore(s => s.openPersonaEditor)
+   614→  const autoOptimizePersona = useOpsStore(s => s.autoOptimizePersona)
+   615→  const [optimizing, setOptimizing] = useState(false)
+   616→  if (!lead) return null
+   617→
+   618→  const persona = personas.find(p => p.id === activePersonaId) || personas[0]
+   619→
+   620→  const handleOptimize = async () => {
+   621→    setOptimizing(true)
+   622→    await autoOptimizePersona(persona.id)
+   623→    setOptimizing(false)
+   624→    toast.success('AI 已自动校准人设参数')
+   625→  }
+   626→
+   627→  return (
+   628→    <div className="p-4 border-b border-border/60">
+   629→      <div className="flex items-center gap-2 mb-3">
+   630→        <div className="w-5 h-5 rounded-md bg-amber-500/10 flex items-center justify-center">
+   631→          <Bot className="w-3 h-3 text-amber-500" />
+   632→        </div>
+   633→        <h3 className="text-[12px] font-semibold tracking-wide">AI 人设</h3>
+   634→        <span className="text-[10px] text-muted-foreground ml-auto">成交率 {(persona.cvr * 100).toFixed(0)}%</span>
+   635→        <button onClick={() => openPersonaEditor(persona.id)} className="p-1 rounded hover:bg-muted text-muted-foreground" title="编辑人设">
+   636→          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+   637→        </button>
+   638→      </div>
+   639→
+   640→      <div className="p-3 rounded-xl bg-secondary/50 flex items-center gap-2.5">
+   641→        <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${persona.gradient} flex items-center justify-center text-[16px] shrink-0`}>
+   642→          {persona.avatar}
+   643→        </div>
+   644→        <div className="flex-1 min-w-0">
+   645→          <div className="text-[12px] font-semibold">{persona.name}</div>
+   646→          <div className="text-[10px] text-muted-foreground">{persona.description}</div>
+   647→        </div>
+   648→        {persona.autoOptimize && (
+   649→          <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-medium">自动优化</span>
+   650→        )}
+   651→      </div>
+   652→
+   653→      {/* 性格参数可视化 */}
+   654→      <div className="mt-2 grid grid-cols-3 gap-1.5">
+   655→        {[
+   656→          { label: '亲和力', value: persona.personality.warmth },
+   657→          { label: '专业度', value: persona.personality.professionalism },
+   658→          { label: '幽默感', value: persona.personality.humor },
+   659→          { label: '紧迫感', value: persona.personality.pressure },
+   660→          { label: '耐心度', value: persona.personality.patience },
+   661→          { label: '权威感', value: persona.personality.authority },
+   662→        ].map((p, i) => (
+   663→          <div key={i} className="p-1.5 rounded-lg bg-secondary/50">
+   664→            <div className="text-[8px] text-muted-foreground">{p.label}</div>
+   665→            <div className="h-1 bg-muted rounded-full mt-0.5 overflow-hidden">
+   666→              <div className="h-full bg-primary rounded-full" style={{ width: `${p.value}%` }} />
+   667→            </div>
+   668→            <div className="text-[8px] font-mono text-foreground mt-0.5">{p.value}</div>
+   669→          </div>
+   670→        ))}
+   671→      </div>
+   672→
+   673→      {/* 人设切换 */}
+   674→      <div className="flex gap-1 mt-2 flex-wrap">
+   675→        {personas.map(p => (
+   676→          <button
+   677→            key={p.id}
+   678→            onClick={() => setActivePersona(p.id)}
+   679→            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium transition-all apple-btn ${
+   680→              p.id === activePersonaId ? 'bg-primary text-primary-foreground' : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+   681→            }`}
+   682→            title={p.name}
+   683→          >
+   684→            {p.avatar} {p.shortName}
+   685→          </button>
+   686→        ))}
+   687→      </div>
+   688→
+   689→      {/* 人设专属能力（从 extendedActions 读取）*/}
+   690→      <div className="mt-3">
+   691→        <div className="text-[10px] text-muted-foreground mb-1.5">{persona.shortName}专属能力：</div>
+   692→        <div className="flex flex-wrap gap-1.5">
+   693→          {persona.extendedActions?.map((a) => (
+   694→            <button
+   695→              key={a.id}
+   696→              onClick={() => { useOpsStore.getState().setClientDraft(a.prompt); toast.success(`已应用：${a.label}`) }}
+   697→              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] bg-card border border-border/60 hover:border-primary/40 hover:bg-primary/5 transition-all apple-btn"
+   698→            >
+   699→              <span>{a.icon}</span>
+   700→              {a.label}
+   701→            </button>
+   702→          ))}
+   703→        </div>
+   704→      </div>
+   705→
+   706→      {/* 自动校准按钮 */}
+   707→      <button
+   708→        onClick={handleOptimize}
+   709→        disabled={optimizing}
+   710→        className="mt-3 w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-purple-500/10 text-purple-600 text-[11px] font-medium hover:bg-purple-500/20 transition-colors apple-btn disabled:opacity-50"
+   711→      >
+   712→        {optimizing ? (
+   713→          <><Loader2 className="w-3 h-3 animate-spin" /> AI 正在校准...</>
+   714→        ) : (
+   715→          <><Cpu className="w-3 h-3" /> AI 自动校准优化</>
+   716→        )}
+   717→      </button>
+   718→      <div className="text-[9px] text-muted-foreground mt-1 text-center">
+   719→        优化幅度: <span className={persona.optimizationScore >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{persona.optimizationScore >= 0 ? '+' : ''}{persona.optimizationScore.toFixed(1)}</span>
+   720→      </div>
+   721→    </div>
+   722→  )
+   723→}
+   724→
+   725→// ─── 推荐话术 ────────────────────────────────────────────────
+   726→function ReplySuggestions() {
+   727→  const suggestions = useOpsStore(s => s.replySuggestions)
+   728→  const loading = useOpsStore(s => s.suggestionsLoading)
+   729→  const applySuggestion = useOpsStore(s => s.applySuggestion)
+   730→  const generateReplySuggestions = useOpsStore(s => s.generateReplySuggestions)
+   731→  const activePersonaId = useOpsStore(s => s.activePersonaId)
+   732→  const personas = useOpsStore(s => s.personas)
+   733→  const persona = personas.find(p => p.id === activePersonaId) || personas[0]
+   734→
+   735→  return (
+   736→    <div className="p-4 border-b border-border/60">
+   737→      <div className="flex items-center gap-2 mb-3">
+   738→        <div className="w-5 h-5 rounded-md bg-emerald-500/10 flex items-center justify-center">
+   739→          <Sparkles className="w-3 h-3 text-emerald-500" />
+   740→        </div>
+   741→        <h3 className="text-[12px] font-semibold tracking-wide">推荐话术</h3>
+   742→        <span className="text-[10px] text-muted-foreground ml-auto">{persona.shortName}风格</span>
+   743→        <button
+   744→          onClick={() => generateReplySuggestions()}
+   745→          className="p-1 rounded hover:bg-muted transition-colors apple-btn"
+   746→        >
+   747→          <svg className={`w-3 h-3 text-muted-foreground ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+   748→            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+   749→          </svg>
+   750→        </button>
+   751→      </div>
+   752→
+   753→      {loading ? (
+   754→        <div className="space-y-1.5">
+   755→          {[1, 2, 3].map(i => (
+   756→            <div key={i} className="h-9 rounded-lg bg-muted/50 animate-pulse" style={{ animationDelay: `${i * 100}ms` }} />
+   757→          ))}
+   758→        </div>
+   759→      ) : suggestions.length === 0 ? (
+   760→        <p className="text-[11px] text-muted-foreground text-center py-2">暂无推荐</p>
+   761→      ) : (
+   762→        <div className="space-y-1.5">
+   763→          {suggestions.map((s, i) => (
+   764→            <button
+   765→              key={s.id}
+   766→              onClick={() => applySuggestion(s)}
+   767→              className="w-full text-left p-2.5 rounded-lg bg-card border border-border/60 hover:border-primary/40 hover:bg-primary/5 transition-all apple-btn group"
+   768→            >
+   769→              <div className="flex items-start gap-1.5">
+   770→                <span className="text-[9px] font-mono text-muted-foreground/60 mt-0.5">{i + 1}</span>
+   771→                <p className="flex-1 text-[11px] leading-relaxed">{s.content}</p>
+   772→              </div>
+   773→              <div className="flex items-center gap-1.5 mt-1 pl-4">
+   774→                <span className="text-[8px] px-1 rounded bg-secondary text-muted-foreground">{intentLabel(s.intent)}</span>
+   775→                <span className="text-[8px] text-muted-foreground">{(s.confidence * 100).toFixed(0)}%</span>
+   776→              </div>
+   777→            </button>
+   778→          ))}
+   779→        </div>
+   780→      )}
+   781→    </div>
+   782→  )
+   783→}
+   784→
+   785→// ─── 快捷动作 ────────────────────────────────────────────────
+   786→function Actions() {
+   787→  const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
+   788→  const openReplyStudio = useOpsStore(s => s.openReplyStudio)
+   789→  const sendClientAction = useOpsStore(s => s.sendClientAction)
+   790→  const markRead = useOpsStore(s => s.markRead)
+   791→  if (!lead) return null
+   792→
+   793→  return (
+   794→    <div className="p-4">
+   795→      <div className="grid grid-cols-2 gap-2">
+   796→        <button
+   797→          onClick={() => openReplyStudio(lead.id)} aria-label="回复"
+   798→          className="flex items-center justify-center gap-1.5 h-10 rounded-xl bg-primary text-primary-foreground text-[12px] font-medium hover:bg-primary/90 active:scale-[0.98] transition-all apple-btn"
+   799→        >
+   800→          <MessageSquare className="w-3.5 h-3.5" />
+   801→          回复
+   802→          <kbd className="text-[8px] px-1 py-px rounded bg-black/20">R</kbd>
+   803→        </button>
+   804→        <button
+   805→          onClick={() => sendClientAction('force_priority', lead.id)} aria-label="优先处理"
+   806→          className="flex items-center justify-center gap-1.5 h-10 rounded-xl bg-rose-500/10 text-rose-600 text-[12px] font-medium hover:bg-rose-500/20 active:scale-[0.98] transition-all apple-btn"
+   807→        >
+   808→          <ArrowUpRight className="w-3.5 h-3.5" />
+   809→          优先处理
+   810→          <kbd className="text-[8px] px-1 py-px rounded bg-rose-500/10">E</kbd>
+   811→        </button>
+   812→        <button
+   813→          onClick={() => sendClientAction('human_handoff', lead.id)} aria-label="转人工"
+   814→          className="flex items-center justify-center gap-1.5 h-10 rounded-xl bg-amber-500/10 text-amber-600 text-[12px] font-medium hover:bg-amber-500/20 active:scale-[0.98] transition-all apple-btn"
+   815→        >
+   816→          <Hand className="w-3.5 h-3.5" />
+   817→          转人工
+   818→          <kbd className="text-[8px] px-1 py-px rounded bg-amber-500/10">H</kbd>
+   819→        </button>
+   820→        <button
+   821→          onClick={() => {
+   822→            markRead(lead.id)
+   823→            sendClientAction('mark_done', lead.id)
+   824→          }}
+   825→          className="flex items-center justify-center gap-1.5 h-10 rounded-xl bg-secondary text-secondary-foreground text-[12px] font-medium hover:bg-secondary/80 active:scale-[0.98] transition-all apple-btn"
+   826→        >
+   827→          <CheckCircle2 className="w-3.5 h-3.5" />
+   828→          完成
+   829→          <kbd className="text-[8px] px-1 py-px rounded bg-background">␣</kbd>
+   830→        </button>
+   831→      </div>
+   832→    </div>
+   833→  )
+   834→}
+   835→
+   836→// ─── 工具函数 ────────────────────────────────────────────────
+   837→function sourceLabel(source: string): string {
+   838→  return { wechat_dm: '微信私聊', comment: '评论', video: '视频号', douyin: '抖音' }[source] || source
+   839→}
+   840→
+   841→function stageLabel(stage: string): string {
+   842→  return {
+   843→    new: '新建', engaged: '互动中', qualified: '已资质', hot: 'HOT',
+   844→    converted: '已成交', churned: '已流失', blocked: '人工接管',
+   845→  }[stage] || stage
+   846→}
+   847→
+   848→function timeAgo(iso: string): string {
+   849→  const diff = Date.now() - new Date(iso).getTime()
+   850→  if (diff < 60000) return '刚刚'
+   851→  if (diff < 3600000) return `${Math.floor(diff / 60000)}m`
+   852→  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`
+   853→  return `${Math.floor(diff / 86400000)}d`
+   854→}
+   855→
+   856→function intentLabel(intent: string): string {
+   857→  return { greeting: '破冰', price: '价格', objection: '异议', closing: '成交', followup: '跟进', empathy: '共情' }[intent] || intent
+   858→}
+   859→

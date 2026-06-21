@@ -1,8 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// WAOS 旺财 Prisma Schema
+// 数据持久层：消息表 + CRM线索表(乐观锁) + 评论表 + 人设表
 
 generator client {
   provider = "prisma-client-js"
@@ -13,20 +10,121 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ─── 消息表 ─────────────────────────────────────────────
+// 对应 WAOS-X: 消息表(id/wx_id/role/content/timestamp)
+model Message {
+  id          String   @id @default(cuid())
+  wxId        String   // 微信/抖音/视频号 用户外部ID
+  leadId      String?  // 关联的线索ID（可选）
+  role        String   // user | assistant | human | system
+  content     String   // 消息内容
+  source      String   @default("wechat_dm") // wechat_dm | wechat_comment | douyin_dm | douyin_comment | video_dm | video_comment
+  intentLabel String?  // PRICE | REJECTION | SILENCE_BREAK | GENERAL
+  intentScore Int?     // 意向置信度 0-100
+  urgency     Int?     // 紧迫度 0-100
+  safetyFiltered Boolean @default(false) // 是否被安全护盾过滤
+  safetyReason String? // 过滤原因
+  latency     Int?     // AI 响应延迟 ms
+  tokensUsed  Int?     // token 消耗
+  model       String?  // 使用的模型
+  timestamp   DateTime @default(now())
+
+  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@index([wxId, timestamp])
+  @@index([leadId])
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ─── CRM 线索表（带乐观锁 version 字段）─────────────────
+// 对应 WAOS-X: CRM线索表(id/name/intent/value/status/version)
+model Lead {
+  id            String   @id @default(cuid())
+  externalId    String   @unique // wx_xxx / dy_xxx
+  name          String   // 客户姓名
+  source        String   @default("wechat") // wechat | douyin | video
+  intentScore   Int      @default(50) // 意向分 0-100
+  valueScore    Int      @default(50) // 价值分 0-100
+  priorityScore Int      @default(50) // 优先级分 0-100
+  stage         String   @default("new") // new | following | hot | won | lost
+  status        String   @default("new") // new | following | high_intent | won | lost (WAOS-X 状态机)
+  version       Int      @default(1) // 乐观锁版本号
+  personaName   String?  // 分配的人设
+  personaColor  String?  // 人设颜色
+  tags          String   @default("[]") // JSON 数组
+  lastMessage   String?  // 最后一条消息
+  lastTouchAt   DateTime? // 最后接触时间
+  unread        Boolean  @default(false)
+  isSpam        Boolean  @default(false)
+  alreadyCustomer Boolean @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  messages      Message[]
+
+  @@index([status])
+  @@index([stage])
+  @@index([intentScore])
+}
+
+// ─── 评论表（视频号/抖音/朋友圈评论截流）─────────────────
+model Comment {
+  id            String   @id @default(cuid())
+  externalId    String   @unique // 评论外部ID
+  platform      String   // douyin | wechat_video | moments
+  userId        String   // 评论者ID
+  userName      String   // 评论者名
+  avatar        String?
+  content       String   // 评论内容
+  videoId       String?  // 视频/动态ID
+  videoTitle    String?
+  videoPlayCount Int     @default(0)
+  videoLikeCount Int     @default(0)
+  intentScore   Int      @default(50) // 意向分 0-100
+  intentReason  String?
+  replyStatus   String   @default("pending") // pending | replied | dm_sent
+  aiReply       String?
+  timestamp     DateTime @default(now())
+
+  @@index([platform, replyStatus])
+  @@index([intentScore])
+  @@index([videoPlayCount])
+}
+
+// ─── 人设表（5 个奔驰销售人设）─────────────────
+model Persona {
+  id          String   @id
+  name        String
+  shortName   String
+  role        String   // sales | service | bd | marketing
+  emoji       String
+  color       String
+  description String
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+// ─── 事件日志表（事件总线信号持久化）─────────────────
+model EventLog {
+  id          String   @id @default(cuid())
+  type        String   // status_update | new_bubble | update_leads | show_takeover | log_msg | safety_block
+  payload     String   // JSON
+  timestamp   DateTime @default(now())
+
+  @@index([type, timestamp])
+}
+
+// ─── AI 调用记录（多模型降级追踪）─────────────────
+model AiCall {
+  id          String   @id @default(cuid())
+  model       String   // zhipu_api | doubao | qianwen | kimi | zhipu | zai
+  success     Boolean
+  latency     Int      // ms
+  tokensUsed  Int      @default(0)
+  reply       String?
+  error       String?
+  fallbackChain String? // JSON
+  timestamp   DateTime @default(now())
+
+  @@index([model, timestamp])
+  @@index([success])
 }

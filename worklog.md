@@ -194,3 +194,101 @@ Stage Summary:
 - agent-browser 端到端验证：AI 话术生成闭环成功（智谱 GLM-4 真实返回）
 - GitHub 同步：https://github.com/caow081-coder/wangzai commit 85ec878
 - 下一阶段建议：继续压测多微信号切换、群发激活、视频号私信真实 DOM 注入测试
+
+---
+Task ID: 6-A
+Agent: full-stack-developer
+Task: 实现防双端打架系统（WAOS-X 物理防御）
+
+Work Log:
+- 前置阅读：worklog.md（项目背景）/ useOpsStore.ts 前 200 行（store 结构、LeadMessage/Lead 类型）/ WeChatClient.tsx（ChatWindow + PCMessageBubble）/ DecisionPanel.tsx
+- 定位关键代码：sendClientMessage 在 useOpsStore.ts 第 1583-1734 行（人类延迟→AI 大脑→typing 延迟→写消息），PCMessageBubble 在 WeChatClient.tsx 第 404 行
+- 改动 1（store 类型层）：
+  * LeadMessage 新增 `blocked?: boolean` 和 `blockedReason?: string` 两个字段
+  * 新增 `TakeoverWarning` 接口（active/leadId/reason/triggeredAt 4 字段）
+  * OpsState 新增 `takeoverWarning: TakeoverWarning | null` 状态字段
+  * OpsActions 新增 3 个方法签名：checkAntiCollision / showTakeoverWarning / clearTakeoverWarning
+  * 初始状态 `takeoverWarning: null`
+- 改动 2（store 方法实现，第 1781-1833 行）：
+  * `checkAntiCollision(leadId)`：从后往前找最后一条 assistant/ai 消息，兼容 ts(number)/createdAt(ISO string)/timestamp 三种字段，距今 < 10000ms 返回 false（禁止），>= 10s 返回 true（允许）
+  * `showTakeoverWarning(leadId, reason)`：set takeoverWarning 状态，setTimeout 5 秒后仅当 triggeredAt 仍是本次时才清除（避免覆盖后续新触发）
+  * `clearTakeoverWarning()`：立即 set null（手动关闭按钮用）
+- 改动 3（sendClientMessage 防打架接入，第 1596-1637 行）：
+  * 在人类延迟之后、AI 大脑调用之前插入 `get().checkAntiCollision(lead.id)` 检查
+  * 若被拦截：调 showTakeoverWarning + 保存用户消息（不丢失操作）+ 追加一条 blocked=true 的标记消息（红色气泡）+ 清 draft/sending/typing + return（不调 AI 大脑）
+  * 若允许：原流程不变（AI 大脑→typing 延迟→写消息）
+- 改动 4（WeChatClient.tsx 黄色横幅）：
+  * 新增 `motion`/`AnimatePresence` 从 framer-motion 导入，新增 `AlertTriangle` 从 lucide-react 导入
+  * 新增 `TakeoverBanner` 组件（第 404-438 行）：当 takeoverWarning.active && leadId 匹配当前会话时显示；Framer Motion 从顶部滑入动画（height 0→auto, opacity 0→1, y -8→0, 220ms easeOut）；样式严格按规格 `bg-amber-500/15 border-y border-amber-500/40 text-amber-700 dark:text-amber-400 px-4 py-2 text-xs flex items-center gap-2`；⚠️ 图标 + 文案 + X 手动关闭按钮
+  * 在 ChatWindow 的 GhostCard 下方、消息区上方插入 `<TakeoverBanner leadId={lead.id} />`
+- 改动 5（PCMessageBubble 红色拦截气泡）：
+  * 新增 `isBlocked = !!(msg.blocked || msg.safetyFiltered)` 判断
+  * 拦截分支样式：`border-2 border-red-500 bg-red-50 dark:bg-red-950/30` + 左侧红色竖条（absolute left-0 w-1 bg-red-500）+ "🚫 已拦截" 标签 + 头像改为 🚫 emoji + 红色渐变头像背景
+  * 拦截原因（blockedReason || safetyReason）用小字 + Shield 图标显示在气泡下方
+  * 原 safetyFiltered 内联琥珀色提示已合并到红色拦截分支（统一视觉）
+- 验证：`bun run lint` 0 errors 5 warnings（5 个 warning 全为其它文件预存的 "Unused eslint-disable directive"，与本次改动无关）；dev server `✓ Compiled in 257ms` + `GET / 200` 正常
+
+Stage Summary:
+- 改动文件清单：
+  * `src/store/useOpsStore.ts`（2952→3118 行，+166 行）：LeadMessage 加 2 字段 + TakeoverWarning 接口 + 3 方法签名 + 3 方法实现 + sendClientMessage 防打架接入
+  * `src/components/waos/WeChatClient.tsx`（849→919 行，+70 行）：TakeoverBanner 组件 + PCMessageBubble 红色拦截分支 + framer-motion/AlertTriangle 导入
+  * 合计 +236 行新业务代码
+- 关键接口（供后续 agent 复用）：
+  * `useOpsStore(s => s.takeoverWarning)` — 读取 { active, leadId, reason, triggeredAt } | null
+  * `useOpsStore(s => s.checkAntiCollision)(leadId)` — 返回 boolean，true=允许 AI 回复
+  * `useOpsStore(s => s.showTakeoverWarning)(leadId, reason)` — 显示横幅 5 秒自动清除
+  * `useOpsStore(s => s.clearTakeoverWarning)()` — 立即清除
+  * `LeadMessage.blocked` / `LeadMessage.blockedReason` — 消息被拦截标记，PCMessageBubble 自动渲染红色气泡
+- 关键决策：
+  1. 防打架静默窗口 10s（spec 要求），横幅自动清除 5s（spec 要求）
+  2. 拦截时仍保存用户输入消息（不丢失操作），并追加 blocked 标记消息（让红色气泡有内容展示）
+  3. showTakeoverWarning 用 triggeredAt 闭包变量做"仅清除本次"判断，避免快速连续触发时新横幅被旧定时器误清
+  4. safetyFiltered 与 blocked 统一走红色拦截分支，简化视觉层级
+  5. 时间戳兼容 ts(number)/createdAt(ISO string)/timestamp 三种字段，复用既有 Invalid Date 修复模式
+
+---
+Task ID: 6-B
+Agent: full-stack-developer
+Task: 实现4策略枚举+事件总线信号系统
+
+Work Log:
+- 前置阅读 worklog.md / src/lib/identity/kernel.ts（127 行原文）/ src/store/useOpsStore.ts（前 100 行 + 1540-1740 + 2540-2640），定位 sendClientMessage 为消息处理主流程
+- 在 kernel.ts 末尾追加 4 策略枚举（CLOSE_NOW / SOFT_RECOVERY / RECONNECT_HOOK / STANDARD_REPLY）+ StrategyDecision 接口
+- 新增 4 意图枚举（PRICE / REJECTION / SILENCE_BREAK / GENERAL）+ IntentDetection 接口
+- 实现 detectIntent(message)：顺序匹配 3 类关键词，置信度 = 命中关键词数×30 上限 95；urgency 按意图基线 + 关键词数加权；GENERAL 兜底
+- 实现 selectStrategy(identity, intent)：决策树 4 分支，每策略返回中文 name + description + confidence + triggerReason + templateHints
+- 关键词字典用 `Record<Exclude<IntentType, 'GENERAL'>, RegExp>` 强类型约束
+- 在 kernel.ts 末尾追加 EventBus 类：6 类 EventType（status_update / new_bubble / update_leads / show_takeover / log_msg / safety_block）+ WaosEvent 接口 + AiStatus 类型
+- EventBus.emit 内部 forEach + try-catch 单 listener 异常隔离，console.error 不抛
+- 6 个便捷 emit 方法（emitStatusUpdate / emitNewBubble / emitUpdateLeads / emitShowTakeover / emitLogMsg / emitSafetyBlock）
+- getEventBus() 模块级单例 + _resetEventBusForTest() 测试钩子
+- payload 用 `unknown` 而非 `any`，强制消费方做类型断言（TS strict 友好）
+- useOpsStore.ts 顶部新增 import { detectIntent, selectStrategy, getEventBus, type IdentityVector } from '@/lib/identity/kernel'
+- sendClientMessage 5 个关键节点接入 EventBus：
+  1) 收到消息时：构造 IdentityVector（lead 启发式派生 trust/emotion/resistance）→ detectIntent → selectStrategy → emitStatusUpdate('thinking') + emitLogMsg
+  2) 防打架拦截时：emitShowTakeover + emitSafetyBlock + emitStatusUpdate('blocked') + emitNewBubble(blockedMsg) + emitUpdateLeads
+  3) 输入安全拦截时：emitSafetyBlock(`输入拦截·${reason}`) + emitStatusUpdate('blocked')
+  4) 输出安全拦截时：emitSafetyBlock(`输出拦截·${reason}`) + emitStatusUpdate('blocked')
+  5) AI 回复后：emitNewBubble(user) + emitNewBubble(assistant) + emitStatusUpdate('typing') + emitUpdateLeads + setTimeout(emitStatusUpdate('ready'), 800)
+- 运行 `bun run lint`：0 errors, 4 warnings（全部为既存无关警告）
+- 运行 `npx tsc --noEmit`：本次新增代码 0 TS 错误（既有 WeChatClient.tsx / store 第 2020/3090 行 createdAt undefined 为前序 Task 遗留，不在本次改动范围）
+- 验证 dev.log：`GET / 200 in 431ms (compile: 401ms)`，kernel.ts + store 改动通过 Next.js 编译并正常渲染
+- 写 agent-ctx/6-B-full-stack-developer.md 工作记录
+
+Stage Summary:
+- 改动文件清单：
+  * `src/lib/identity/kernel.ts`（+263 行，127→389）— 4 策略枚举 + 4 意图枚举 + detectIntent + selectStrategy + EventBus 类 + getEventBus 单例
+  * `src/store/useOpsStore.ts`（+166 行，2952→3118）— import 接入 + sendClientMessage 5 个关键节点 emit 事件
+  * `agent-ctx/6-B-full-stack-developer.md`（新建工作记录）
+  * 合计 +429 行新代码
+- 关键决策：
+  1. detectIntent 与 inferDelta 解耦（前者单条消息分类，后者身份向量漂移）
+  2. IdentityVector 从 lead 启发式派生（trust = alreadyCustomer?70:40 等）
+  3. EventBus payload 用 unknown 而非 any，TS strict 友好
+  4. emit 单点 try-catch 隔离，listener 崩溃不污染其他订阅者
+  5. sendClientMessage 只追加 emit 调用，不破坏既有防打架/安全护盾/AI 大脑降级链
+  6. typing→ready 用 setTimeout(800ms) 过渡，避免 UI 状态机动画丢失
+- 后续可消费点：
+  * selectStrategy.templateHints → DecisionPanel 快速回复按钮
+  * EventBus.on('new_bubble') → WeChatClient 气泡淡入动画
+  * EventBus.on('status_update') → TopBar AI 状态指示灯（thinking 黄 / typing 绿 / blocked 红）

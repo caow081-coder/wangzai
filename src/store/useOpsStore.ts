@@ -22,6 +22,12 @@
 import { create } from 'zustand'
 import { io, Socket } from 'socket.io-client'
 import { useMemo } from 'react'
+import {
+  detectIntent,
+  selectStrategy,
+  getEventBus,
+  type IdentityVector,
+} from '@/lib/identity/kernel'
 
 // ─── Types ────────────────────────────────────────────────────
 export type FocusMode = 'FOLLOW' | 'PIN' | 'DND'
@@ -52,6 +58,9 @@ export interface LeadMessage {
   createdAt?: string
   ts?: number
   source?: string
+  // 防双端打架 / 安全护盾拦截标记
+  blocked?: boolean           // 是否被拦截（防打架静默 / 安全护盾拦截）
+  blockedReason?: string      // 拦截原因（用于气泡下方小字显示）
 }
 
 export interface Lead {
@@ -204,6 +213,16 @@ export interface AIMomentsPost {
   isLead?: boolean  // 是否来自客户
 }
 
+// ─── 防双端打架：人工接管警告横幅 ───────────────────────────────
+// 当检测到人工正在手动回复、且 AI 在 10 秒静默窗口内被触发时，
+// 顶部展示黄色横幅提示人工接管，避免"双端打架"（人机同时发消息导致客户困惑）。
+export interface TakeoverWarning {
+  active: boolean          // 是否正在显示黄色横幅
+  leadId: string | null    // 哪个线索触发的
+  reason: string           // 触发原因（展示给操作者）
+  triggeredAt: number      // 触发时间戳（Date.now()，用于自动清除计时）
+}
+
 export interface ReplySuggestion {
   id: string
   content: string
@@ -339,6 +358,9 @@ interface OpsState {
   clientDraft: string
   clientSending: boolean
   clientTab: 'chat' | 'moments' | 'contacts' | 'intercept'  // 微信客户端内部 tab: 聊天/朋友圈/通讯录/截流
+
+  // 防双端打架：人工接管警告横幅（10 秒静默窗口期内 AI 暂停回复）
+  takeoverWarning: TakeoverWarning | null
 
   // 视图模式: assistant (AI 助手简洁模式) / pro (专业控制台完整模式)
   viewMode: 'assistant' | 'pro'
@@ -564,6 +586,11 @@ interface OpsState {
   setClientSending: (sending: boolean) => void
   setClientTyping: (typing: boolean) => void
   sendClientMessage: () => Promise<void>
+
+  // 防双端打架：人工接管警告
+  checkAntiCollision: (leadId: string) => boolean         // 检查 10 秒静默窗口，返回 AI 是否允许回复
+  showTakeoverWarning: (leadId: string, reason: string) => void  // 显示黄色横幅，5 秒后自动清除
+  clearTakeoverWarning: () => void                        // 立即清除横幅
 
   // Function panel
   setFunctionPanel: (panel: OpsState['functionPanel']) => void
@@ -803,6 +830,9 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   clientDraft: '',
   clientSending: false,
   clientTab: 'chat',
+
+  // 防双端打架：初始无警告
+  takeoverWarning: null,
 
   viewMode: 'assistant',
   proPanel: 'inbox',
@@ -1565,9 +1595,75 @@ export const useOpsStore = create<OpsState>((set, get) => ({
 
     set({ clientSending: true })
 
+    // ─── EventBus：收到消息时 → 意图识别 + 策略选择 + 状态切换为 thinking ──
+    // 注：构造 IdentityVector 时 trust/emotion/resistance 用启发式近似（lead 中无显式字段），
+    // intent/value/urgency 直接复用 lead 的评分。
+    const identity: IdentityVector = {
+      trust: lead.alreadyCustomer ? 70 : 40,
+      intent: lead.intentScore,
+      emotion: lead.intentScore > 50 ? 60 : 40,
+      urgency: lead.priorityScore,
+      resistance: Math.max(0, 100 - lead.intentScore),
+      value: lead.valueScore,
+    }
+    const intent = detectIntent(clientDraft)
+    const strategy = selectStrategy(identity, intent)
+    const eventBus = getEventBus()
+    eventBus.emitStatusUpdate('thinking')
+    eventBus.emitLogMsg('info', `[策略] ${strategy.name} · 触发: ${strategy.triggerReason}`)
+
     // 1. 人类行为模拟延迟（防封号）
     const humanDelay = 1500 + Math.random() * 2000
     await new Promise(r => setTimeout(r, humanDelay))
+
+    // ─── 防双端打架检查（在调用 AI 大脑前）─────────────────────
+    // 若该 lead 的最后一条 AI 回复距今 < 10 秒，则视为"人工正在手动回复"，
+    // 暂停 AI 一次回复，避免人机同时发消息让客户困惑。
+    const canReply = get().checkAntiCollision(lead.id)
+    if (!canReply) {
+      get().showTakeoverWarning(lead.id, '检测到人工正在回复，AI 已静默 10 秒')
+      // ─── EventBus：防打架拦截 → show_takeover + safety_block + 状态 blocked ──
+      eventBus.emitShowTakeover(lead.id, '防双端打架 · 人工接管中')
+      eventBus.emitSafetyBlock('防双端打架 · 人工接管中', clientDraft)
+      eventBus.emitStatusUpdate('blocked')
+
+      // 仍然保存用户输入的消息（不丢失操作），并追加一条"已拦截"标记消息（红色气泡）
+      const blockedNow = new Date().toISOString()
+      const userMsg: LeadMessage = {
+        id: `msg_user_${Date.now()}`,
+        role: 'user',
+        content: clientDraft,
+        createdAt: blockedNow,
+      }
+      const blockedMsg: LeadMessage = {
+        id: `msg_blocked_${Date.now()}`,
+        role: 'assistant',
+        content: '【AI 已静默】检测到人工正在回复，AI 暂停 10 秒以避免双端打架。',
+        blocked: true,
+        blockedReason: '防双端打架 · 人工接管中',
+        createdAt: blockedNow,
+      }
+
+      set({
+        leads: get().leads.map(l =>
+          l.id === lead.id
+            ? {
+                ...l,
+                messages: [...(l.messages || []), userMsg, blockedMsg].slice(-20),
+                lastMessage: blockedMsg.content,
+                lastTouchAt: blockedNow,
+                unread: true,
+              }
+            : l
+        ),
+        clientDraft: '',
+        clientSending: false,
+        clientTyping: false,
+      })
+      eventBus.emitNewBubble(lead.id, 'assistant', blockedMsg.content)
+      eventBus.emitUpdateLeads()
+      return  // 不调用 AI 大脑
+    }
 
     // 2. 调用 AI 大脑（多模型降级）生成回复
     set({ clientTyping: true })
@@ -1586,6 +1682,9 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         // 输入被拦截，返回安全回复
         aiReply = '抱歉，无法理解您的意思，请问还有其他产品问题吗？'
         safety = { filtered: true, reason: safetyRes.inputReason }
+        // ─── EventBus：输入安全拦截 → safety_block + 状态 blocked ──
+        eventBus.emitSafetyBlock(`输入拦截 · ${safetyRes.inputReason}`, clientDraft)
+        eventBus.emitStatusUpdate('blocked')
       } else {
         // 调用 AI 大脑（多模型降级 + 用户配置的 Cookie）
         const brainRes = await fetch('/api/waos/brain', {
@@ -1613,6 +1712,9 @@ export const useOpsStore = create<OpsState>((set, get) => ({
           usedModel = brainData.model || 'zai'
           if (outputSafety.outputFiltered) {
             safety = { filtered: true, reason: outputSafety.outputReason }
+            // ─── EventBus：输出安全拦截 → safety_block + 状态 blocked ──
+            eventBus.emitSafetyBlock(`输出拦截 · ${outputSafety.outputReason}`, brainData.reply)
+            eventBus.emitStatusUpdate('blocked')
           }
         } else {
           aiReply = brainData.error || '【系统兜底】当前咨询人数较多，主管稍后会为您解答。'
@@ -1620,6 +1722,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       }
     } catch {
       aiReply = null
+      eventBus.emitLogMsg('error', '[AI 大脑] 调用异常，使用兜底回复')
     }
 
     // 3. 模拟"对方正在输入"延迟
@@ -1662,9 +1765,72 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       clientTyping: false,
     })
 
+    // ─── EventBus：AI 回复后 → new_bubble（用户+AI两条）+ typing + update_leads ──
+    eventBus.emitNewBubble(lead.id, 'user', userMsg.content)
+    eventBus.emitNewBubble(lead.id, 'assistant', aiMsg.content)
+    eventBus.emitStatusUpdate('typing')
+    eventBus.emitUpdateLeads()
+    // 短暂延迟后切回 ready，让 UI 状态机完成 typing → ready 过渡
+    setTimeout(() => getEventBus().emitStatusUpdate('ready'), 800)
+
     // 5. Emit client action + add audit
     get().sendClientAction('manual_reply', lead.id)
   },
+
+  // ─── 防双端打架：人工接管警告 ───────────────────────────────────
+  // 检查指定 lead 的最后一条 AI 回复时间戳，10 秒静默窗口内禁止 AI 再次回复。
+  // 返回 true：允许 AI 回复；返回 false：禁止（同时调用方应 showTakeoverWarning）。
+  checkAntiCollision: (leadId) => {
+    const lead = get().leads.find(l => l.id === leadId)
+    if (!lead || !lead.messages || lead.messages.length === 0) return true  // 无历史消息，允许
+
+    // 从后往前查找最后一条 assistant/ai 消息
+    const msgs = lead.messages
+    let lastAssistantTs: number | null = null
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i]
+      if (m.role === 'assistant' || m.role === 'ai') {
+        // 兼容 ts(number) / createdAt(string ISO) / timestamp 三种字段
+        const rawTs = (m as LeadMessage).ts ?? (m as LeadMessage).createdAt ?? (m as LeadMessage & { timestamp?: unknown }).timestamp
+        if (rawTs !== undefined && rawTs !== null && rawTs !== '') {
+          const parsed = typeof rawTs === 'number' ? rawTs : new Date(rawTs as string).getTime()
+          if (!isNaN(parsed)) {
+            lastAssistantTs = parsed
+            break
+          }
+        }
+      }
+    }
+
+    if (lastAssistantTs === null) return true  // 找不到 AI 消息时间戳，允许
+
+    const SILENT_WINDOW_MS = 10_000  // 10 秒静默窗口
+    const elapsed = Date.now() - lastAssistantTs
+    return elapsed >= SILENT_WINDOW_MS  // 距今 >= 10s 允许；< 10s 禁止
+  },
+
+  // 显示黄色横幅，5 秒后自动清除（仅清除本次触发，不覆盖后续新触发）
+  showTakeoverWarning: (leadId, reason) => {
+    const triggeredAt = Date.now()
+    set({
+      takeoverWarning: {
+        active: true,
+        leadId,
+        reason,
+        triggeredAt,
+      },
+    })
+    // 5 秒后自动清除（仅当当前横幅仍是本次触发时才清除）
+    setTimeout(() => {
+      const cur = get().takeoverWarning
+      if (cur && cur.triggeredAt === triggeredAt) {
+        set({ takeoverWarning: null })
+      }
+    }, 5000)
+  },
+
+  // 立即清除横幅（手动关闭按钮使用）
+  clearTakeoverWarning: () => set({ takeoverWarning: null }),
 
   setFunctionPanel: (panel) => set({ functionPanel: panel }),
 

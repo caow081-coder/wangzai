@@ -90,7 +90,7 @@ export async function search(query: string, options: { topK?: number; category?:
     if (sim < minScore) continue
     const doc = await db.knowledgeDoc.findUnique({
       where: { id: docId },
-      select: { id: true, title: true, content: true, category: true, tags: true, priority: true },
+      select: { id: true, title: true, content: true, category: true, tags: true, priority: true, keywords: true },
     })
     if (!doc) continue
     if (category && doc.category !== category) continue

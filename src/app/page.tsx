@@ -20,6 +20,8 @@ import { DownloadFloat } from '@/components/waos/DownloadFloat'
 import { BrainSettings } from '@/components/waos/BrainSettings'
 import { Splashscreen } from '@/components/waos/Splashscreen'
 import { ErrorBoundary } from '@/components/waos/ErrorBoundary'
+import { UpdateChecker } from '@/components/waos/UpdateChecker'
+import { KnowledgePanel } from '@/components/waos/KnowledgePanel'
 
 export default function Home() {
   const connect = useOpsStore(s => s.connect)
@@ -62,7 +64,9 @@ export default function Home() {
       <DashboardPanel />
       <ProDrawer />
       <BrainSettings />
+      <KnowledgePanel />
       <DownloadFloat />
+      <UpdateChecker />
       {connection !== 'connected' && (
         <div className="fixed top-16 right-4 z-50 px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 border border-amber-500/30 backdrop-blur">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse mr-1.5 align-middle" />

@@ -410,6 +410,7 @@ interface OpsState {
   replyStudioSafety: { filtered: boolean; reason?: string } | null
   commandPaletteOpen: boolean
   settingsOpen: boolean
+  knowledgePanelOpen: boolean  // 知识库管理全屏 Dialog
   notificationsOpen: boolean
   dashboardFullscreen: boolean
   selectedTab: 'inbox' | 'metrics' | 'funnel' | 'experiments' | 'audit'
@@ -638,6 +639,8 @@ interface OpsState {
   closeCommandPalette: () => void
   openSettings: () => void
   closeSettings: () => void
+  openKnowledgePanel: () => void
+  closeKnowledgePanel: () => void
   openNotifications: () => void
   closeNotifications: () => void
   toggleDashboardFullscreen: () => void
@@ -1564,6 +1567,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   replyStudioSafety: null,
   commandPaletteOpen: false,
   settingsOpen: false,
+  knowledgePanelOpen: false,
   notificationsOpen: false,
   dashboardFullscreen: false,
   selectedTab: 'inbox',
@@ -2537,6 +2541,9 @@ export const useOpsStore = create<OpsState>((set, get) => ({
 
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
+
+  openKnowledgePanel: () => set({ knowledgePanelOpen: true }),
+  closeKnowledgePanel: () => set({ knowledgePanelOpen: false }),
 
   openNotifications: () => set({ notificationsOpen: true }),
   closeNotifications: () => set({ notificationsOpen: false }),

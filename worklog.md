@@ -1087,3 +1087,252 @@ Stage Summary:
 - Windows打包完整指南: docs/BUILD.md 648行
 - GitHub: commit 24b331b,本地远端同步
 - 下一阶段: Windows端打包exe验证 + 知识库管理UI + 更多Skill
+
+---
+
+## Task MORE-SKILLS：新增 3 个 Skill（emotion_analysis / competitor_compare / price_calculator）（2026-06-21）
+
+### 任务概要
+在现有 9 个 Skill 基础上，新增 3 个原子能力，覆盖「情绪识别 / 竞品对比 / 价格计算」三大销售场景。Skill 总数从 9 → 12。
+
+### 修改文件
+- **src/lib/sop/skills.ts**：439 行 → 820 行（**净增 381 行**）
+  - 顶部注释从「9 个原子能力」改为「12 个原子能力」，新增 3 条 skill 简介行
+  - 新增 `EmotionType` 字面量联合类型（line 24）
+  - 新增 Skill 10 emotion_analysis（lines 431-523，含 EMOTION_KEYWORDS 词典 + EMOTION_SUGGESTIONS 映射 + execute 实现）
+  - 新增 Skill 11 competitor_compare（lines 525-695，含 CompetitorEntry 接口 + COMPETITOR_MAP 10 条竞品映射 + execute 实现）
+  - 新增 Skill 12 price_calculator（lines 697-802，含 CarPriceEntry 接口 + CAR_PRICE_DICT 7 款车型 + execute 实现）
+  - ALL_SKILLS 数组追加 3 个 Skill（lines 815-817）
+  - SKILL_DEFINITIONS 通过 `.map` 自动包含（line 820，无改动）
+- **src/lib/sop/registry.ts**：未改动（构造函数循环 ALL_SKILLS 自动注册）
+- **src/lib/sop/types.ts**：未改动（SkillContext 已有 `[key: string]: unknown` 索引签名，足以承载 carModel/downPaymentRatio/months/interestRate 等新参数）
+
+### 3 个 Skill 接口
+
+#### Skill 10：emotion_analysis（category: recognition）
+- **输入**：`{ message: string, identity?: IdentityVector }`
+- **输出**：`{ emotion: 'angry'|'anxious'|'excited'|'satisfied'|'neutral', score: number, suggestion: string, matchedKeywords: string[], identityEmotion: number|null }`
+- **算法**：
+  1. 关键词优先级匹配：angry(0-30) > satisfied(70-100) > anxious(30-50) > excited(50-70) > neutral(50)
+  2. 命中数 → 分值步进：每多命中一个关键词，分数 ±10（angry 递减，其他递增）
+  3. 上下文兜底：关键词未命中且 identity.emotion < 30 → angry(25)；> 75 → satisfied(80)
+- **suggestion**：5 类情绪各有应对建议（如 angry → "客户情绪激动，建议立即安抚+转人工"）
+
+#### Skill 11：competitor_compare（category: recognition）
+- **输入**：`{ message: string }`
+- **输出**：`{ detected: boolean, competitor: string, ourModel: string, advantages: string[], disadvantages: string[], suggestedPitch: string, ragSource: string|null }`
+- **算法**：
+  1. 正则匹配 10 条竞品映射：X3→GLC / 5系→E级 / X5→GLE / 3系→C级 / Model S→EQE / A4→C级 / A6→E级 / Q5→GLC / 雷克萨斯→GLE / 特斯拉→EQE
+  2. 调用 RAG 知识库 `POST /api/waos/knowledge` 搜索 "{ourModel} vs {competitor} 对比"（10s 超时）
+  3. RAG 不可用 → 降级到硬编码优劣势 + 推荐话术（不中断 SOP）
+  4. RAG 可用 → 硬编码话术后附 RAG 内容片段（前 120 字）
+- **特点**：客观承认我方劣势（如 GLC vs X3 的 "操控感稍弱"），建立信任
+
+#### Skill 12：price_calculator（category: evaluation）
+- **输入**：`{ carModel: string, downPaymentRatio: 0.2-0.5, months: 36|48|60, interestRate: 0-0.05 }`
+- **输出**：`{ carModel, price, priceRange, downPayment, downPaymentRatio, loanAmount, monthlyPayment, monthlyPaymentWan, totalInterest, months, interestRate, years, breakdown }`
+- **车型价格字典**（中位价）：C级 35.5 / GLC 47.5 / GLE 79 / E级 52 / S级 150 / EQE 50 / AMG C63 90（单位：万元）
+- **公式**（简化等额本息近似）：
+  - 首付 = 裸车价 × 首付比例
+  - 贷款额 = 裸车价 - 首付
+  - 总利息 = 贷款额 × 年利率 × 年数
+  - 月供 = 贷款额 × (1 + 年利率 × 年数) / 期数
+- **breakdown 示例**："奔驰GLC 裸车 47.5万，首付 30% = 14.25万，贷款 33.25万，60期月供 5883元，总利息 2.66万"
+- **校验**：4 个参数全量校验，失败返回 fail() + 明确错误信息
+
+### 验证
+- `bun run lint`：**0 errors, 4 warnings**（均为既存无关警告：BrainSettings/Splashscreen/TopBar 的 Unused eslint-disable，与本任务无关）
+- `bunx tsc --noEmit`：**src/lib/sop/ 目录 0 错误**（其他无关文件如 DashboardPanel/ProDrawer/knowledge.ts 既存错误未触动）
+- 文件结构验证：12 个 Skill 按编号 1-12 顺序排列，ALL_SKILLS 数组 12 项齐全，SKILL_DEFINITIONS 通过 `.map` 自动派生
+
+### 设计要点
+1. **遵循现有模式**：3 个 Skill 均用 `SkillDefinition` + `execute(ctx): Promise<SkillResult>` + `ok()/fail()` 辅助函数，与现有 9 个 Skill 完全一致
+2. **错误兜底**：competitor_compare 的 RAG 调用失败时降级到硬编码（不中断 SOP），与 knowledge_search 的降级策略一致
+3. **超时保护**：competitor_compare 的 fetch 用 `AbortSignal.timeout(10000)`，与 crm_update/send_message/knowledge_search 一致
+4. **类型严格**：新增 `EmotionType` 字面量联合 + `CompetitorEntry`/`CarPriceEntry` 接口，避免 any
+5. **参数校验**：price_calculator 对 4 个输入参数全量校验（车型/首付比例/分期数/利率），失败立即 fail()
+6. **中文注释**：所有关键逻辑块均有中文注释说明算法
+7. **不破坏现有 9 个 Skill**：仅在 ALL_SKILLS 数组追加 3 项，未修改任何现有 Skill 代码
+
+---
+
+## AUTO-UPDATE · electron-updater 自动更新集成（2026-06-21）
+
+**Task ID**: AUTO-UPDATE
+**角色**: DevOps 工程师
+**目标**: 让旺财桌面客户端支持从 GitHub Releases 自动检查、下载、安装更新
+
+### 交付文件清单
+
+| # | 路径 | 类型 | 变更 |
+|---|------|------|------|
+| 1 | `package.json` | 修改 | ① `dependencies` 新增 `"electron-updater": "^6.8.9"`；② `build.publish` 从 `null` 改为 GitHub Releases 配置（`provider: github`, `owner: caow081-coder`, `repo: wangzai`, `releaseType: release`） |
+| 2 | `electron/main.js` | 修改 | ① 顶部新增 autoUpdater 初始化块（67 行）：监听 `update-available` / `update-not-available` / `download-progress` / `update-downloaded` / `error` 事件，转发给渲染进程；② `app.whenReady()` 内调用 `autoUpdater.checkForUpdates()`（延迟 3s）+ 每 4 小时定时检查；③ 新增 4 个 IPC handler：`check-for-updates` / `download-update` / `install-update` / `get-app-version`，全部 try-catch + 降级响应 |
+| 3 | `electron/preload.js` | 修改 | 顶部新增 `electron-updater` 模块探测；末尾通过 `contextBridge.exposeInMainWorld('waosUpdater', …)` 暴露 7 个 API：`isAvailable` / `checkForUpdates` / `downloadUpdate` / `installUpdate` / `getAppVersion` / `onUpdateAvailable` / `onUpdateDownloaded` / `onUpdateDownloadProgress`，监听器返回 unsubscribe 函数 |
+| 4 | `src/components/waos/UpdateChecker.tsx` | 新建 | 渲染进程更新组件（约 460 行）：① Zustand `useUpdaterStore` 状态机（idle/checking/available/no-update/downloading/downloaded/error/unavailable）；② `<UpdateChecker />` 全局监听组件（挂在 page.tsx，启动 5s 后自动检查 + Toast 通知 + 进度浮窗）；③ `<UpdateProgressFloat />` 下载进度浮窗（带百分比/速度/已下载字节）；④ `<UpdateStatusInline />` 嵌入 SettingsDialog 的内联面板（当前版本 + 状态 + 检查/下载/安装按钮） |
+| 5 | `src/app/page.tsx` | 修改 | 引入并挂载 `<UpdateChecker />`（位于 `<DownloadFloat />` 之后） |
+| 6 | `src/components/waos/SettingsDialog.tsx` | 修改 | ① import `UpdateStatusInline`；② 在「通知」Section 后、「重置」按钮前插入「版本与更新」Section |
+| 7 | `docs/BUILD.md` | 修改 | ① 目录新增第 9 章；② 8.4 发布流程改为支持 GH_TOKEN 自动上传 + 8.4.1 手动上传指南；③ 8.5 改为"已实现，详见第 9 章"；④ 新增第 9 章「自动更新（electron-updater）」共 10 个小节：架构图 / 关键文件 / 发布流程 / 用户端体验 / 手动检查 / 配置详解 / 内网部署 / 故障排查 / 调试技巧 / 安全说明；⑤ 变更记录新增 v1.1 行 |
+
+### 关键接口
+
+#### 主进程 IPC（`electron/main.js`）
+
+```js
+// 检查更新（手动触发）
+ipcMain.handle('check-for-updates', async () => {
+  /* 返回 { available, info?, currentVersion?, reason?, error? } */
+})
+
+// 下载更新（触发后通过 download-progress 事件推送进度）
+ipcMain.handle('download-update', async () => {
+  /* 返回 { success, reason?, error? } */
+})
+
+// 安装并重启（quitAndInstall）
+ipcMain.handle('install-update', async () => {
+  /* 返回 { success, reason?, error? } */
+})
+
+// 获取当前版本
+ipcMain.handle('get-app-version', async () => {
+  /* 返回 { version, isPackaged } */
+})
+```
+
+#### 主进程 → 渲染进程事件（通过 `webContents.send`）
+
+| 事件名 | payload | 触发时机 |
+|--------|---------|---------|
+| `update-available` | `UpdateInfo { version, releaseDate, releaseNotes }` | electron-updater 发现 GitHub Releases 上的版本 > 本地版本 |
+| `update-not-available` | `UpdateInfo` | 远端版本 ≤ 本地版本（仅日志，不转发） |
+| `update-download-progress` | `{ percent, transferred, total, bytesPerSecond }` | 下载过程中（约每秒一次） |
+| `update-downloaded` | `UpdateInfo` | 下载完成，可调用 quitAndInstall |
+
+#### 渲染进程 API（`window.waosUpdater`，由 `electron/preload.js` 暴露）
+
+```ts
+window.waosUpdater = {
+  isAvailable: boolean,                                       // electron-updater 模块是否已加载
+  checkForUpdates: () => Promise<CheckResult>,                // 主动检查
+  downloadUpdate: () => Promise<DownloadResult>,              // 触发下载
+  installUpdate: () => Promise<InstallResult>,                // 退出并安装
+  getAppVersion: () => Promise<{ version, isPackaged }>,      // 获取当前版本
+  onUpdateAvailable:    (cb) => unsubscribe,                  // 订阅发现新版本事件
+  onUpdateDownloaded:   (cb) => unsubscribe,                  // 订阅下载完成事件
+  onUpdateDownloadProgress: (cb) => unsubscribe,              // 订阅下载进度事件
+}
+```
+
+#### React 组件（`src/components/waos/UpdateChecker.tsx`）
+
+| 导出 | 用途 |
+|------|------|
+| `<UpdateChecker />` | 全局监听组件，挂在 `page.tsx`。启动 5s 后自动检查，监听主进程事件，弹 Toast + 进度浮窗 |
+| `<UpdateStatusInline />` | 嵌入 `SettingsDialog` 的内联面板。显示当前版本/状态/上次检查时间 + 「检查更新」/「下载」/「重启并安装」按钮 |
+| `useUpdaterStore` | Zustand store，跨组件共享状态：status / currentVersion / newVersion / progress / errorMsg / lastCheckedAt |
+| `doCheckUpdate(manual)` | 主动作：调用 `checkForUpdates` IPC，更新 store + Toast |
+| `doDownload()` | 主动作：调用 `downloadUpdate` IPC |
+| `doInstall()` | 主动作：调用 `installUpdate` IPC（quitAndInstall） |
+
+### 设计要点
+
+1. **生产模式才启用**：`autoUpdater` 初始化包裹在 `if (!isDev)` 中（`isDev = !app.isPackaged`），开发模式 `autoUpdater` 保持 `null`，所有 IPC 返回 `{ available: false, reason: '非生产模式…' }`
+2. **不自动下载**：`autoUpdater.autoDownload = false`，必须用户点击「下载更新」按钮才下载，避免弱网环境占用带宽
+3. **退出时自动安装**：`autoUpdater.autoInstallOnAppQuit = true`，用户即使不点「重启并安装」，下次退出应用也会自动安装
+4. **双保险检查**：主进程在 `app.whenReady()` 后延迟 3s 自动检查 + 渲染进程在 mount 后延迟 5s 主动调用 IPC 检查，确保即使一方失败也能感知
+5. **每 4 小时定时检查**：长运行的应用能感知新版本
+6. **全链路 try-catch**：所有 IPC handler、事件转发、渲染进程动作都加 try-catch，错误降级为 Toast 提示而非崩溃
+7. **网页端降级**：`window.waosUpdater?.isAvailable` 检测，非 Electron 环境下 `UpdateChecker` 直接 return null，`UpdateStatusInline` 显示「网页/开发模式」提示
+8. **进度可视化**：监听 `download-progress` 事件，浮窗显示百分比 + 已下载/总字节 + 速度（B/s, KB/s, MB/s 自动单位）
+9. **状态机驱动 UI**：8 个状态（idle/checking/available/no-update/downloading/downloaded/error/unavailable），SettingsDialog 内联面板的按钮根据状态自动切换显示（检查/下载/安装）
+10. **深色模式兼容**：浮窗用 `bg-background/95` + `border-border`，SettingsDialog 内联面板沿用既有 `oklch()` 色板，自动适配深色
+11. **事件监听可取消**：preload 暴露的 `onUpdateXxx` 都返回 unsubscribe 函数，避免 React 重复 mount 导致监听器泄漏
+12. **中文注释**：electron/main.js、electron/preload.js、UpdateChecker.tsx 全部中文注释
+
+### 验证
+
+- `bun add electron-updater`：成功，安装 `electron-updater@6.8.9`
+- 主进程语法检查：`node --check electron/main.js` ✅
+- preload 语法检查：`node --check electron/preload.js` ✅
+- 渲染进程 lint：`bun run lint`（见下文）
+- 文档完整性：BUILD.md 第 9 章共 10 个小节齐全
+
+### 用户端体验流程
+
+```
+启动旺财（已安装 v1.0.0）
+  ↓ 5s 后
+渲染进程自动 checkForUpdates
+  ↓
+GitHub Releases 上有 v1.1.0 (latest.yml version: 1.1.0)
+  ↓
+主进程推送 update-available 事件
+  ↓
+Toast: 「✨ 发现新版本 v1.1.0，点击下载更新」
+  ↓ 用户点击「下载更新」
+调用 downloadUpdate IPC
+  ↓
+主进程下载中，每秒推送 download-progress 事件
+  ↓
+右下角浮窗: 「正在下载 v1.1.0 · 24.5 MB / 200 MB · 2.3 MB/s」+ 进度条 12%
+  ↓ 下载完成
+主进程推送 update-downloaded 事件
+  ↓
+Toast: 「✅ 新版本已下载完成，点击重启并安装」
+浮窗: 「重启并安装」按钮
+  ↓ 用户点击
+调用 installUpdate IPC → quitAndInstall()
+  ↓
+应用关闭，NSIS 静默安装 v1.1.0，自动启动
+  ↓
+启动后即为 v1.1.0
+```
+
+### 后续可增强项（未来工作）
+
+1. **代码签名**：当前 `verifyUpdateCodeSignature: false`，未签名有安全隐患（见 BUILD.md 9.10）
+2. **增量更新**：electron-updater 支持 blockmap 增量更新，已通过 `.blockmap` 文件启用
+3. **多通道**：可加 `beta` / `stable` 通道切换（`allowPrerelease`）
+4. **更新日志展示**：当前 releaseNotes 仅在状态中保存，未来可在 Toast/浮窗中渲染 markdown 更新日志
+5. **下载暂停/取消**：`autoUpdater.cancelDownload()` 可加「取消下载」按钮
+6. **electron-log 集成**：将 `[Updater]` 日志写入 `%APPDATA%/wangcai/logs/` 便于排查
+
+
+---
+
+## Task KB-UI · RAG 知识库管理 UI（2026-06-21）
+
+### 产出
+- **新建** `src/components/waos/KnowledgePanel.tsx`（1116 行）— 三栏全屏 Dialog：左 180px 分类树 / 中 文档表格+搜索测试 / 右 280px 详情编辑
+- **修改** `src/components/waos/SettingsDialog.tsx`（+27 行）— 新增「📖 知识库管理」入口按钮
+- **修改** `src/app/page.tsx`（+2 行）— 挂载 `<KnowledgePanel />`
+- **修复** `src/lib/rag/knowledge.ts`（+1 行）— search API 的 `findUnique` select 漏了 `keywords` 字段导致 `doc.keywords.includes(t)` 报错
+
+### 关键功能
+1. **9 分类树**：全部/车型/配置/价格/金融/保养/试驾/竞品/FAQ，每类带文档数 badge
+2. **RAG 检索测试框**：350ms 防抖，实时显示 Top5 结果 + 相似度百分比 + 关键词 `<mark>` 高亮 + 匹配关键词 chips
+3. **文档表格**：标题/分类/优先级（4 色阈值）/命中次数/相对时间/操作
+4. **详情编辑**：标题 Input + 内容 Textarea(6行) + 分类 Select + 标签 Input + 优先级 Slider(0-100)
+5. **保存策略**：后端无 update，用「delete + add」模拟，RAG 索引自动重建
+6. **添加文档 Dialog** + **删除确认 Dialog** + **批量导入 JSON** + **初始化 16 条种子**
+
+### Bug 修复
+`src/lib/rag/knowledge.ts` 第 91-97 行 search 函数：
+- 修复前：`findUnique` select 不含 `keywords`，`doc.keywords.includes(t)` 报 `Cannot read properties of undefined`
+- 修复前实测：`GET /api/waos/knowledge?view=search&q=GLC多少钱` → 500
+- 修复后实测：→ 200，返回 5 条带 score+matchedKeywords 的结果
+- 这是个隐藏 bug，之前没人调用 search view 所以没暴露，本次 UI 开发首次触发
+
+### 验证
+- Lint：0 errors，4 warnings（全部在已存在文件，与本次无关）
+- API 实测：stats/list/search 全部 200
+- 页面渲染：HTTP 200，89KB
+- Dev server：Ready in 850ms，无编译错误
+
+### Store 状态（已存在，本次未改）
+```typescript
+knowledgePanelOpen: boolean        // useOpsStore.ts:413
+openKnowledgePanel: () => void     // useOpsStore.ts:2545
+closeKnowledgePanel: () => void    // useOpsStore.ts:2546
+```

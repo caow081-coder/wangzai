@@ -26,6 +26,74 @@ let mainWindow = null
 let nextProcess = null
 let streamProcess = null
 
+// ─── 自动更新（仅生产模式启用）──────────────────────────────
+// 使用 electron-updater 从 GitHub Releases 拉取 latest.yml 比对版本。
+// 开发模式（!app.isPackaged）下 autoUpdater 保持 null，所有 IPC 返回降级响应。
+let autoUpdater = null
+if (!isDev) {
+  try {
+    autoUpdater = require('electron-updater').autoUpdater
+    autoUpdater.autoDownload = false           // 不自动下载，提示用户后再下载
+    autoUpdater.autoInstallOnAppQuit = true    // 退出时自动安装已下载的更新
+    autoUpdater.allowDowngrade = false
+    autoUpdater.allowPrerelease = false
+
+    // 发现新版本 → 通知渲染进程
+    autoUpdater.on('update-available', (info) => {
+      console.log('[Updater] 发现新版本:', info?.version)
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-available', info)
+        }
+      } catch (err) {
+        console.error('[Updater] 发送 update-available 失败:', err.message)
+      }
+    })
+
+    // 没有新版本（仅供日志）
+    autoUpdater.on('update-not-available', (info) => {
+      console.log('[Updater] 当前已是最新版本:', info?.version || app.getVersion())
+    })
+
+    // 下载进度 → 通知渲染进程（用于进度条）
+    autoUpdater.on('download-progress', (progress) => {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-download-progress', {
+            percent: progress?.percent || 0,
+            transferred: progress?.transferred || 0,
+            total: progress?.total || 0,
+            bytesPerSecond: progress?.bytesPerSecond || 0,
+          })
+        }
+      } catch {
+        /* noop */
+      }
+    })
+
+    // 下载完成 → 通知渲染进程
+    autoUpdater.on('update-downloaded', (info) => {
+      console.log('[Updater] 新版本已下载:', info?.version)
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-downloaded', info)
+        }
+      } catch (err) {
+        console.error('[Updater] 发送 update-downloaded 失败:', err.message)
+      }
+    })
+
+    autoUpdater.on('error', (err) => {
+      console.error('[Updater] 错误:', err?.message || err)
+    })
+
+    console.log('[Updater] electron-updater 已加载，当前版本:', app.getVersion())
+  } catch (err) {
+    console.warn('[Updater] electron-updater 未安装，跳过自动更新:', err.message)
+    autoUpdater = null
+  }
+}
+
 // ─── 检查端口是否可用 ──────────────────────────────────────
 function isPortTaken(port) {
   return new Promise((resolve) => {
@@ -293,6 +361,21 @@ app.whenReady().then(async () => {
   createWindow()
   createMenu()
 
+  // 启动时检查更新（仅生产模式 + electron-updater 已加载时）
+  if (autoUpdater) {
+    // 延迟 3 秒检查，避免与 Next.js 初始化抢资源
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch(err => {
+        console.error('[Updater] 启动时检查更新失败:', err.message)
+      })
+    }, 3000)
+
+    // 每 4 小时检查一次
+    setInterval(() => {
+      autoUpdater.checkForUpdates().catch(() => {})
+    }, 4 * 60 * 60 * 1000)
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
@@ -558,5 +641,58 @@ ipcMain.handle('sandbox-status', async (event, { platform }) => {
     inCooldown: cooldown,
     limits: sandbox.RATE_LIMITS[platform],
   }
+})
+
+// ─── 自动更新 IPC ──────────────────────────────────────────
+// 渲染进程通过 window.waosUpdater 调用，所有 handler 都加 try-catch。
+// 开发模式（autoUpdater === null）下返回降级响应，便于前端 UI 兜底。
+
+// IPC: 手动检查更新
+ipcMain.handle('check-for-updates', async () => {
+  if (!autoUpdater) {
+    return { available: false, reason: '非生产模式或 electron-updater 未加载' }
+  }
+  try {
+    const result = await autoUpdater.checkForUpdates()
+    const updateInfo = result?.updateInfo || null
+    return {
+      available: !!updateInfo,
+      info: updateInfo,
+      currentVersion: app.getVersion(),
+    }
+  } catch (err) {
+    return { available: false, error: err?.message || String(err) }
+  }
+})
+
+// IPC: 下载更新（触发后通过 download-progress 事件推送进度）
+ipcMain.handle('download-update', async () => {
+  if (!autoUpdater) {
+    return { success: false, reason: '非生产模式或 electron-updater 未加载' }
+  }
+  try {
+    await autoUpdater.downloadUpdate()
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+// IPC: 安装更新并重启（quitAndInstall 会关闭应用并启动安装程序）
+ipcMain.handle('install-update', async () => {
+  if (!autoUpdater) {
+    return { success: false, reason: '非生产模式' }
+  }
+  try {
+    autoUpdater.quitAndInstall(true, true)
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+// IPC: 获取当前版本
+ipcMain.handle('get-app-version', async () => {
+  return { version: app.getVersion(), isPackaged: app.isPackaged }
 })
 

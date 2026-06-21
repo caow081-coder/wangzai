@@ -16,6 +16,7 @@
 - [6. 常见问题（FAQ）](#6-常见问题faq)
 - [7. 生产环境配置](#7-生产环境配置)
 - [8. 更新版本](#8-更新版本)
+- [9. 自动更新（electron-updater）](#9-自动更新electron-updater)
 - [附录：产物结构](#附录产物结构)
 
 ---
@@ -544,35 +545,269 @@ git commit -m "release: v1.1.0 - 新增视频号截流"
 git tag v1.1.0
 git push origin main --tags
 
-# 4. 打包
+# 4. 打包并发布（需设置 GH_TOKEN，详见第 9 章）
+#    方式 A：本地打包 + 自动上传到 GitHub Releases
+$env:GH_TOKEN="ghp_xxxxxxxxxxxxxxxxxxxx"   # PowerShell
 bun run electron:build
 
-# 5. 上传 release/旺财 Setup 1.1.0.exe 到 GitHub Releases
-#    https://github.com/caow081-coder/wangzai/releases/new
+#    方式 B：仅本地打包，手动上传 exe + latest.yml
+#    见第 8.4.1 节
 ```
 
-### 8.5 自动更新（未来增强）
+> 自 v1.1.0 起，`package.json` 的 `build.publish` 已配置为 GitHub Releases，
+> 打包时 electron-builder 会自动生成 `latest.yml` 并尝试上传到
+> `https://github.com/caow081-coder/wangzai/releases`。
+> 若未设置 `GH_TOKEN`，会跳过上传，需要手动发布（见 9.3）。
 
-当前未配置 `publish`（值为 `null`）。如需自动更新：
+#### 8.4.1 手动上传到 GitHub Releases（无 GH_TOKEN 时）
 
-1. 配置 GitHub Releases 作为更新源：
+1. 打包：`bun run electron:build`，产物在 `release/`
+2. 打开 [Releases · caow081-coder/wangzai](https://github.com/caow081-coder/wangzai/releases/new)
+3. 选择刚 push 的 tag（如 `v1.1.0`）
+4. 上传以下三个文件：
+   - `旺财 Setup 1.1.0.exe` — 主安装包
+   - `旺财 Setup 1.1.0.exe.blockmap` — 增量更新用
+   - `latest.yml` — electron-updater 比对版本用的元数据（**必须**）
+5. 点击 **Publish release**
+
+> ⚠️ `latest.yml` 是 electron-updater 找到新版本的关键文件。没有它，
+> 客户端会一直显示"已是最新版本"。
+
+### 8.5 自动更新（已实现）
+
+自 v1.1.0 起，旺财已集成 [`electron-updater`](https://www.electron.build/auto-update)
+实现自动更新。详见第 [9 章](#9-自动更新electron-updater)。
+
+---
+
+## 9. 自动更新（electron-updater）
+
+旺财 v1.1.0+ 集成 [`electron-updater`](https://www.electron.build/auto-update)，
+从 GitHub Releases 拉取 `latest.yml` 比对版本，发现新版本后提示用户下载安装。
+
+### 9.1 整体架构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  GitHub Releases (caow081-coder/wangzai)                        │
+│  ├── 旺财 Setup 1.1.0.exe                                        │
+│  ├── 旺财 Setup 1.1.0.exe.blockmap                               │
+│  └── latest.yml              ← electron-updater 比对版本用       │
+└────────────────────────────────┬────────────────────────────────┘
+                                 │ HTTPS GET
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Electron 主进程 (electron/main.js)                              │
+│  ├── require('electron-updater').autoUpdater                     │
+│  ├── 启动后延迟 3s 检查一次                                       │
+│  ├── 每 4 小时定时检查                                            │
+│  └── IPC: check-for-updates / download-update / install-update   │
+└────────────────────────────────┬────────────────────────────────┘
+                                 │ contextBridge
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  渲染进程 (Next.js)                                              │
+│  ├── window.waosUpdater (preload.js 暴露)                        │
+│  ├── <UpdateChecker />  全局监听 + Toast 通知 + 下载进度浮窗     │
+│  └── <UpdateStatusInline />  设置 Dialog 里的"检查更新"按钮      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 9.2 关键文件
+
+| 文件 | 作用 |
+|------|------|
+| `electron/main.js` | 集成 `autoUpdater`，监听 `update-available` / `download-progress` / `update-downloaded`，注册 4 个 IPC handler |
+| `electron/preload.js` | 通过 `contextBridge.exposeInMainWorld('waosUpdater', …)` 暴露更新 API |
+| `src/components/waos/UpdateChecker.tsx` | 渲染进程：状态机 + Toast + 进度浮窗 + 设置面板内联组件 |
+| `src/app/page.tsx` | 挂载 `<UpdateChecker />` |
+| `src/components/waos/SettingsDialog.tsx` | 嵌入 `<UpdateStatusInline />` 提供"检查更新"按钮 |
+| `package.json` 的 `build.publish` | 配置 GitHub Releases 作为发布渠道 |
+
+### 9.3 发布新版本流程（开发者侧）
+
+#### 步骤 1：创建 GitHub Token
+
+1. 打开 https://github.com/settings/tokens/new
+2. 勾选 `repo` 权限（用于上传 release 资产）
+3. 生成后复制 token（形如 `ghp_xxxxx...`）
+
+#### 步骤 2：设置环境变量
+
+```powershell
+# PowerShell（当前会话有效）
+$env:GH_TOKEN="ghp_xxxxxxxxxxxxxxxxxxxx"
+
+# 持久化（写入用户环境变量）
+[Environment]::SetEnvironmentVariable("GH_TOKEN", "ghp_xxx...", "User")
+
+# 或写入 .bashrc / .zshrc
+export GH_TOKEN="ghp_xxxxxxxxxxxxxxxxxxxx"
+```
+
+#### 步骤 3：更新版本号 + 提交 + 打 tag
+
+```bash
+# 编辑 package.json，把 "version" 改为 "1.1.0"
+# 或用 npm version 命令自动改 + 打 tag
+npm version 1.1.0 -m "release: v1.1.0"
+
+git push origin main --tags
+```
+
+#### 步骤 4：打包 + 自动上传
+
+```bash
+bun run electron:build
+```
+
+打包完成后，`release/` 目录会出现：
+
+```
+release/
+├── 旺财 Setup 1.1.0.exe              ← 安装包
+├── 旺财 Setup 1.1.0.exe.blockmap     ← 增量更新 blockmap
+└── latest.yml                        ← 版本元数据（electron-updater 读取）
+```
+
+electron-builder 检测到 `publish.provider=github` + `GH_TOKEN` 后，
+会自动上传这三个文件到 GitHub Releases 的对应 tag。
+
+#### 步骤 5：验证
+
+打开 https://github.com/caow081-coder/wangzai/releases，
+确认对应 tag 的 Release 已发布且包含三个资产文件。
+
+### 9.4 用户端体验
+
+已安装旧版本旺财的用户，下次启动应用时：
+
+1. **启动后 5 秒**：渲染进程自动调用 `checkForUpdates`（被动）
+2. **主进程** 同时在 3 秒后检查（双保险），找到新版本推送 `update-available` 事件
+3. **Toast 通知**：「发现新版本 v1.1.0，点击下载更新」
+4. 用户点击「下载更新」按钮：
+   - 调用 `downloadUpdate()` IPC
+   - 主进程开始下载，期间推送 `download-progress` 事件
+   - 右下角浮窗显示进度条 `12% · 24.5 MB / 200 MB · 2.3 MB/s`
+5. 下载完成后：
+   - 主进程推送 `update-downloaded` 事件
+   - Toast：「新版本已下载完成，点击重启并安装」
+   - 浮窗显示「重启并安装」按钮
+6. 用户点击「重启并安装」：
+   - 调用 `installUpdate()` IPC → 主进程 `quitAndInstall()`
+   - 应用关闭，NSIS 静默安装新版本，启动后即为新版本
+
+> 若用户不点击「重启并安装」，下次退出应用时也会自动安装
+> （`autoInstallOnAppQuit = true`）。
+
+### 9.5 手动检查更新
+
+用户可主动触发更新检查：
+
+1. 打开旺财 → 点顶栏齿轮图标 → 打开「WAOS 控制台设置」
+2. 滚动到「版本与更新」区块
+3. 显示内容：
+   - 当前版本：`v1.0.0`
+   - 更新状态：`已是最新版本` / `发现新版本 v1.1.0` / `下载中…` / `已就绪`
+   - 上次检查时间：`14:30`
+4. 点击「检查更新」按钮 → 主动调用 `check-for-updates` IPC
+5. 若有新版本，按钮会切换为「下载」，下载完成后切换为「重启并安装」
+
+### 9.6 自动更新配置详解
+
+`package.json` 的 `build.publish` 字段：
 
 ```jsonc
 "publish": {
-  "provider": "github",
-  "owner": "caow081-coder",
-  "repo": "wangzai"
+  "provider": "github",           // 使用 GitHub Releases
+  "owner": "caow081-coder",       // 仓库所有者
+  "repo": "wangzai",              // 仓库名
+  "releaseType": "release"        // 仅发布到 release（不含 draft/prerelease）
 }
 ```
 
-2. 在 `electron/main.js` 集成 `electron-updater`：
+`electron/main.js` 中的关键配置：
 
 ```js
-const { autoUpdater } = require('electron-updater')
-autoUpdater.checkForUpdatesAndNotify()
+autoUpdater.autoDownload = false           // 不自动下载，提示用户后再下载
+autoUpdater.autoInstallOnAppQuit = true    // 退出时自动安装已下载的更新
+autoUpdater.allowDowngrade = false         // 不允许降级
+autoUpdater.allowPrerelease = false        // 不安装预发布版本
 ```
 
-3. 用户启动应用时自动检查 GitHub Releases 最新版本。
+### 9.7 离线 / 内网部署
+
+自动更新依赖 GitHub 公网访问。若部署在内网：
+
+1. **方案 A**：使用 `generic` provider 替代 `github`
+
+```jsonc
+"publish": {
+  "provider": "generic",
+  "url": "https://your-internal-server/waos/releases/"
+}
+```
+
+将 `latest.yml` + `旺财 Setup x.x.x.exe` + `.blockmap` 放到该 HTTP 服务器即可。
+
+2. **方案 B**：禁用自动更新
+
+将 `electron/main.js` 中的 `if (!isDev)` 改为 `if (false)`，
+或设置环境变量 `WAOS_DISABLE_UPDATE=1` 后在 main.js 检测：
+
+```js
+if (!isDev && !process.env.WAOS_DISABLE_UPDATE) {
+  // ...
+}
+```
+
+### 9.8 故障排查
+
+| 现象 | 可能原因 | 解决 |
+|------|---------|------|
+| 启动后无任何更新提示 | 1) 开发模式（`isDev=true`） 2) `latest.yml` 未上传到 Release | 打包后再测；检查 GitHub Release 是否包含 `latest.yml` |
+| 一直显示「已是最新版本」 | `latest.yml` 中的 `version` 字段 ≤ 当前版本 | 确认 `package.json` 的 `version` 已升级且重新打包 |
+| 下载失败 / 网络错误 | GitHub Releases 在国内访问慢 | 用户挂代理；或改用 `generic` provider 走国内 CDN |
+| 下载完成但点击「重启并安装」无反应 | `quitAndInstall` 权限不足 | 让用户右键「以管理员身份运行」一次旺财 |
+| Toast 一直显示「检查中…」 | 主进程 `autoUpdater.checkForUpdates()` 未返回 | 查看 `%APPDATA%/旺财/logs/` 或控制台 `[Updater]` 日志 |
+| 上传到 GitHub Releases 失败 | `GH_TOKEN` 未设置或权限不足 | 重新生成 token，勾选 `repo` 权限 |
+
+### 9.9 调试技巧
+
+1. **查看主进程日志**：开发模式下 `bun run electron:dev`，控制台会打印：
+   ```
+   [Updater] electron-updater 已加载，当前版本: 1.1.0
+   [Updater] 发现新版本: 1.2.0
+   [Updater] 新版本已下载: 1.2.0
+   ```
+
+2. **手动触发更新检查**：在 DevTools Console 中执行：
+   ```js
+   await window.waosUpdater.checkForUpdates()
+   ```
+
+3. **模拟旧版本测试更新**：临时把 `package.json` 的 `version` 改小（如 `0.0.1`），
+   重新 `bun run electron:build`，安装这个版本后启动，会立即触发更新到最新版。
+
+4. **关闭自动下载**（默认已关闭）：用户必须手动点「下载更新」按钮才会下载，
+   避免在弱网环境下占用带宽。
+
+### 9.10 安全说明
+
+- `electron-updater` 默认使用 HTTPS + 代码签名校验
+- 当前 `verifyUpdateCodeSignature: false`（见 `package.json` 的 `win` 配置），
+  因为本应用未做代码签名。**生产环境强烈建议启用代码签名**：
+  1. 购买 Windows 代码签名证书（约 ¥1000-3000/年）
+  2. 在 `package.json` 添加：
+     ```jsonc
+     "win": {
+       "certificateFile": "certs/wangcai.pfx",
+       "certificatePassword": "..."
+     }
+     ```
+  3. 移除 `verifyUpdateCodeSignature: false`
+- 未签名时，攻击者若劫持 GitHub Releases 可推送恶意更新。
+  建议开启 GitHub 仓库的 2FA + branch protection。
 
 ---
 
@@ -640,9 +875,10 @@ release/
 | 日期 | 版本 | 变更 |
 |------|------|------|
 | 2026-06-21 | v1.0 | 初始版本：完整打包指南 + copy-assets.js 优化 + electron-builder 配置完善 |
+| 2026-06-21 | v1.1 | 新增第 9 章：自动更新（electron-updater 集成）；更新 8.4 发布流程；8.5 改为已实现 |
 
 ---
 
 **文档维护**：旺财 DevOps
 **最后更新**：2026-06-21
-**对应代码版本**：v1.0.0
+**对应代码版本**：v1.1.0

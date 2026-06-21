@@ -9,9 +9,10 @@ import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import {
   Settings as SettingsIcon, Sliders, Bell, Eye, RefreshCw, Zap,
-  Flame, Bot, Radio, Clock, TrendingUp, Lock,
+  Flame, Bot, Radio, Clock, TrendingUp, Lock, BookOpen,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { UpdateStatusInline } from '@/components/waos/UpdateChecker'
 
 // UI-COMPACT: 原顶栏的 6 大模块快捷键全部收进设置 Dialog，作为顶部入口
 const MODULE_TABS = [
@@ -29,6 +30,14 @@ export function SettingsDialog() {
   const settings = useOpsStore(s => s.settings)
   const update = useOpsStore(s => s.updateSettings)
   const openProDrawer = useOpsStore(s => s.openProDrawer)
+  const openKnowledgePanel = useOpsStore(s => s.openKnowledgePanel)
+
+  // 打开知识库管理面板：关闭设置 Dialog，再唤起 KnowledgePanel
+  const handleOpenKnowledge = () => {
+    close()
+    openKnowledgePanel()
+    toast.info('已打开知识库管理')
+  }
 
   // 打开 ProDrawer 并切换到对应 tab，同时关闭设置 Dialog
   const openModule = (tab: string) => {
@@ -98,6 +107,23 @@ export function SettingsDialog() {
                 </button>
               ))}
             </div>
+          </section>
+
+          {/* ─── 知识库管理入口 ─── */}
+          <section>
+            <button
+              onClick={handleOpenKnowledge}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-[12px] font-medium bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/15 hover:border-emerald-500/50 transition-colors group"
+            >
+              <BookOpen className="w-4 h-4 text-emerald-400" />
+              <div className="flex-1 text-left">
+                <div className="text-[12px] font-semibold">📖 知识库管理</div>
+                <div className="text-[10px] font-mono text-emerald-400/70 mt-0.5">
+                  RAG · 文档 CRUD · 检索测试 · 批量导入
+                </div>
+              </div>
+              <span className="text-[10px] text-emerald-400/70 group-hover:translate-x-0.5 transition-transform">→</span>
+            </button>
           </section>
 
           {/* ─── Scheduler Parameters ─── */}
@@ -237,6 +263,9 @@ export function SettingsDialog() {
               onChange={v => update({ soundEnabled: v })}
             />
           </Section>
+
+          {/* ─── 版本与更新 ─── */}
+          <UpdateStatusInline />
 
           {/* ─── Reset ─── */}
           <div className="pt-2">

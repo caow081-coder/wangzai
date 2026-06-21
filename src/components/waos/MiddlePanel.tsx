@@ -422,7 +422,8 @@ function MessageBubble({ msg, leadPersonaColor }: { msg: LeadMessage; leadPerson
           <span>{isUser ? '用户' : isHuman ? '人工' : 'AI'}</span>
           <span>·</span>
           <span>{(() => {
-            const rawTs = (msg as any).createdAt ?? (msg as any).ts ?? (msg as any).timestamp
+            // LeadMessage 类型已声明 createdAt?/ts?，直接读取无需 as any
+            const rawTs: string | number | undefined = msg.createdAt ?? msg.ts
             const d = rawTs ? new Date(rawTs) : null
             return d && !isNaN(d.getTime()) ? d.toLocaleTimeString('zh-CN', { hour12: false }) : '--'
           })()}</span>

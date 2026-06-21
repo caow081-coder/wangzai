@@ -233,17 +233,27 @@ async function withRetry(fn, retries = 3, baseDelay = 1000) {
 }
 
 // ─── 私信发送 (DOM 注入) ─────────────────────────────────────────────
+// AUDIT-SYS: 校验 userId 防止 CSS 选择器注入（如 userId 含 `"]` 可逃逸属性选择器）
+function sanitizeSelectorValue(s) {
+  if (typeof s !== 'string') return ''
+  // 仅允许字母数字下划线短横，长度限制 64
+  return s.replace(/[^\w-]/g, '').slice(0, 64)
+}
+
 async function sendDM(userId, content) {
   return withRetry(async () => {
     // 1. 防封延迟
     await sleep(randomDelay(3000, 6000))
-    // 2. 点击用户头像进入私信
-    const userEl = document.querySelector(`[data-user-id="${userId}"], [class*="UserName"][data-user-id="${userId}"]`)
+    // 2. 校验 userId
+    const safeUserId = sanitizeSelectorValue(userId)
+    if (!safeUserId) throw new Error('userId 非法')
+    // 3. 点击用户头像进入私信
+    const userEl = document.querySelector(`[data-user-id="${safeUserId}"], [class*="UserName"][data-user-id="${safeUserId}"]`)
     if (userEl) {
       userEl.click()
       await sleep(1500)
     }
-    // 3. 找到输入框并填入内容
+    // 4. 找到输入框并填入内容
     const inputEl = document.querySelector('[data-e2e="im-input"], [class*="im-input"], [contenteditable="true"][class*="input"]') 
       || document.querySelector('textarea[class*="im"]')
     if (!inputEl) throw new Error('找不到私信输入框')
@@ -259,7 +269,7 @@ async function sendDM(userId, content) {
       document.execCommand('insertText', false, content)
     }
     await sleep(500)
-    // 4. 点击发送按钮
+    // 5. 点击发送按钮
     const sendBtn = document.querySelector('[data-e2e="im-send"], [class*="send-btn"], button[class*="Send"]')
     if (!sendBtn) throw new Error('找不到发送按钮')
     sendBtn.click()

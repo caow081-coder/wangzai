@@ -593,7 +593,8 @@ function TakeoverBanner({ leadId }: { leadId: string }) {
 function PCMessageBubble({ msg, leadName, leadColor, personaAvatar }: { msg: LeadMessage; leadName: string; leadColor?: string; personaAvatar: string }) {
   const isMe = msg.role === 'assistant' || msg.role === 'human'
   // 兼容 createdAt (string) 和 ts (number) 两种字段，防 Invalid Date
-  const rawTs = (msg as any).createdAt ?? (msg as any).ts ?? (msg as any).timestamp
+  // LeadMessage 类型已包含 createdAt?/ts?/source? 等可选字段，这里直接读取无需 as any
+  const rawTs: string | number | undefined = msg.createdAt ?? msg.ts
   const date = rawTs ? new Date(rawTs) : null
   const time = date && !isNaN(date.getTime()) ? date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' }) : ''
 

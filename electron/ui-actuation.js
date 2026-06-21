@@ -223,16 +223,40 @@ function showView(platformId, visible) {
 }
 
 /**
- * 销毁 BrowserView
+ * 销毁平台 BrowserView
+ * AUDIT-SYS: 加 try-catch 避免 parentWindow 已销毁时崩溃
  */
 function destroyPlatformView(platformId) {
   const entry = views.get(platformId)
   if (!entry) return
 
-  entry.parentWindow.removeBrowserView(entry.view)
-  entry.view.webContents.destroy()
+  try {
+    entry.parentWindow.removeBrowserView(entry.view)
+  } catch (err) {
+    // parentWindow 可能已销毁，忽略
+    console.warn(`[UI-Actuation] removeBrowserView 失败 (${platformId}):`, err.message)
+  }
+  try {
+    if (entry.view.webContents && !entry.view.webContents.isDestroyed()) {
+      entry.view.webContents.close()
+    }
+  } catch (err) {
+    console.warn(`[UI-Actuation] webContents 销毁失败 (${platformId}):`, err.message)
+  }
   views.delete(platformId)
   console.log(`[${entry.config.name}] BrowserView 已销毁`)
+}
+
+/**
+ * 销毁所有平台 BrowserView
+ * AUDIT-SYS: app.quit 时调用，避免 webContents 内存泄漏
+ */
+function destroyAllViews() {
+  const platforms = Array.from(views.keys())
+  for (const p of platforms) {
+    destroyPlatformView(p)
+  }
+  console.log(`[UI-Actuation] 已销毁全部 ${platforms.length} 个 BrowserView`)
 }
 
 /**
@@ -286,15 +310,22 @@ async function readComments(platformId) {
 
 /**
  * 截流: 点击用户私信
+ * AUDIT-SYS: 严格校验 userIndex 为非负整数，防止 JS 注入
  */
 async function clickDM(platformId, userIndex) {
   const entry = views.get(platformId)
   if (!entry) return false
 
+  // 严格校验 userIndex 为非负整数
+  if (!Number.isInteger(userIndex) || userIndex < 0) {
+    console.warn(`[UI-Actuation] clickDM userIndex 非法: ${userIndex}`)
+    return false
+  }
+
   try {
     return await entry.view.webContents.executeJavaScript(
       `(() => {
-        const comments = document.querySelectorAll('${entry.config.selectors.commentList}');
+        const comments = document.querySelectorAll(${JSON.stringify(entry.config.selectors.commentList)});
         const target = comments[${userIndex}];
         if (target) return window.__wangcaiClickDM(target);
         return false;
@@ -355,6 +386,7 @@ module.exports = {
   resizeView,
   showView,
   destroyPlatformView,
+  destroyAllViews,
   sendToPlatform,
   readMessages,
   readComments,

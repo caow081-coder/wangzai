@@ -15,6 +15,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { getWechatVideoConnector } from '@/lib/wechat-video/connector'
+import { sanitizeInput } from '@/lib/safety'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -57,6 +58,13 @@ export async function POST(req: NextRequest) {
       }
 
       case 'reply_comment': {
+        if (!body.commentId || !body.content || typeof body.content !== 'string') {
+          return NextResponse.json({ action: 'reply_comment', success: false, error: 'commentId and content required' }, { status: 400 })
+        }
+        const sanity = sanitizeInput(body.content)
+        if (!sanity.ok) {
+          return NextResponse.json({ action: 'reply_comment', success: false, error: `内容未过安全检测: ${sanity.reason}`, layer: sanity.layer }, { status: 400 })
+        }
         const ok = await connector.replyComment(body.commentId, body.content)
         return NextResponse.json({
           action: 'reply_comment',
@@ -65,6 +73,13 @@ export async function POST(req: NextRequest) {
       }
 
       case 'send_dm': {
+        if (!body.userId || !body.content || typeof body.content !== 'string') {
+          return NextResponse.json({ action: 'send_dm', success: false, error: 'userId and content required' }, { status: 400 })
+        }
+        const sanity = sanitizeInput(body.content)
+        if (!sanity.ok) {
+          return NextResponse.json({ action: 'send_dm', success: false, error: `内容未过安全检测: ${sanity.reason}`, layer: sanity.layer }, { status: 400 })
+        }
         const ok = await connector.sendDM(body.userId, body.content)
         return NextResponse.json({
           action: 'send_dm',

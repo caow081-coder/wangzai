@@ -60,15 +60,23 @@ function startStreamServer(PORT = 3003) {
   const warmCount = INITIAL_LEADS.filter(l => l.stage === 'warm').length
   const coldCount = INITIAL_LEADS.filter(l => l.stage === 'cold').length
 
+  // AUDIT-SYS: 跟踪递归 setTimeout 句柄，提供 graceful shutdown
+  let nextTimer = null
+  let shuttingDown = false
+
   io.on('connection', (socket) => {
     console.log(`[WAOS-Stream] 客户端连接 (${io.engine.clientsCount} 在线)`)
     socket.emit('initial', { leads: INITIAL_LEADS, hotCount, warmCount, coldCount })
+    socket.on('disconnect', (reason) => {
+      console.log(`[WAOS-Stream] 客户端断开: ${reason} (${io.engine.clientsCount} 在线)`)
+    })
   })
 
   // 每 8-15 秒推送一条新事件
   function scheduleNext() {
+    if (shuttingDown) return
     const delay = 8000 + Math.random() * 7000
-    setTimeout(() => {
+    nextTimer = setTimeout(() => {
       emitCount++
       const channel = CHANNELS[Math.floor(Math.random() * CHANNELS.length)]
       const userName = USER_NAMES[Math.floor(Math.random() * USER_NAMES.length)]
@@ -76,7 +84,7 @@ function startStreamServer(PORT = 3003) {
       const intent = Math.min(100, channel.baseIntent + msg.intent * 0.3 + (Math.random() * 20 - 10))
 
       const event = {
-        id: `evt_${Date.now()}_${emitCount}`,
+        id: `evt_${Date.now()}_${emitCount}_${Math.random().toString(36).slice(2, 6)}`,
         type: 'new_lead',
         lead: {
           id: `L${100 + emitCount}`,
@@ -117,7 +125,27 @@ function startStreamServer(PORT = 3003) {
     console.log(`[WAOS-Stream] Realtime service running on port ${PORT}`)
   })
 
-  return { io, httpServer }
+  // AUDIT-SYS: 优雅关闭，避免定时器泄漏
+  function shutdown() {
+    if (shuttingDown) return
+    shuttingDown = true
+    if (nextTimer) {
+      clearTimeout(nextTimer)
+      nextTimer = null
+    }
+    io.close(() => {
+      console.log('[WAOS-Stream] socket.io 已关闭')
+    })
+    httpServer.close(() => {
+      console.log('[WAOS-Stream] http server 已关闭')
+    })
+  }
+
+  // 监听进程信号
+  process.on('SIGTERM', shutdown)
+  process.on('SIGINT', shutdown)
+
+  return { io, httpServer, shutdown }
 }
 
 module.exports = { startStreamServer }

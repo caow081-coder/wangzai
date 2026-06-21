@@ -24,8 +24,26 @@ const PLATFORM_DOMAINS: Record<string, string> = {
 }
 
 // 内存级 Cookie 存储（每个会话独立）
-// key: sessionId, value: { model, cookies: string }
-const sessionCookies = new Map<string, { model: string; cookies: string[] }>()
+// key: sessionId, value: { model, cookies: string[], lastAccess: number }
+const sessionCookies = new Map<string, { model: string; cookies: string[]; lastAccess: number }>()
+// TTL: 30 分钟未访问则清理（防止内存无限增长）
+const SESSION_TTL = 30 * 60 * 1000
+// 最大会话数（防恶意创建）
+const MAX_SESSIONS = 1000
+
+// 定期清理过期会话
+function cleanupExpiredSessions() {
+  const now = Date.now()
+  for (const [k, v] of sessionCookies) {
+    if (now - v.lastAccess > SESSION_TTL) sessionCookies.delete(k)
+  }
+  // 超过上限时清除最旧的 20%
+  if (sessionCookies.size > MAX_SESSIONS) {
+    const sorted = [...sessionCookies.entries()].sort((a, b) => a[1].lastAccess - b[1].lastAccess)
+    const toRemove = Math.floor(sorted.length * 0.2)
+    for (let i = 0; i < toRemove; i++) sessionCookies.delete(sorted[i][0])
+  }
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const { path } = await params
@@ -51,6 +69,9 @@ async function handleProxy(req: NextRequest, pathSegments: string[]) {
   const targetUrl = `https://${domain}/${actualPath}${req.nextUrl.search || ''}`
   const sessionId = req.headers.get('x-session-id') || 'default'
 
+  // 每次请求顺手清理过期会话
+  cleanupExpiredSessions()
+
   try {
     // 转发请求
     const method = req.method
@@ -65,6 +86,7 @@ async function handleProxy(req: NextRequest, pathSegments: string[]) {
     const existingSession = sessionCookies.get(sessionId)
     if (existingSession && existingSession.model === model && existingSession.cookies.length > 0) {
       headers['Cookie'] = existingSession.cookies.join('; ')
+      existingSession.lastAccess = Date.now()
     }
 
     // 转发请求体
@@ -79,15 +101,17 @@ async function handleProxy(req: NextRequest, pathSegments: string[]) {
       headers,
       body,
       redirect: 'manual',  // 手动处理重定向，保持在代理内
+      signal: AbortSignal.timeout(30000),  // 超时保护，防止上游 hang 住
     })
 
     // 捕获 Set-Cookie
     const setCookies = res.headers.getSetCookie?.() || []
     if (setCookies.length > 0) {
       if (!sessionCookies.has(sessionId)) {
-        sessionCookies.set(sessionId, { model, cookies: [] })
+        sessionCookies.set(sessionId, { model, cookies: [], lastAccess: Date.now() })
       }
       const session = sessionCookies.get(sessionId)!
+      session.lastAccess = Date.now()
       // 提取 cookie name=value 部分（去掉 Path/Domain/Expires 等）
       for (const sc of setCookies) {
         const cookiePart = sc.split(';')[0]
@@ -156,10 +180,12 @@ async function handleProxy(req: NextRequest, pathSegments: string[]) {
   }
 }
 
-// ─── Cookie 提取端点（通过 query 参数区分）─────────────────
-// /api/waos/brain/proxy/extract?session=xxx → 返回该 session 的 Cookie
-export async function extract(req: NextRequest) {
-  const sessionId = req.nextUrl.searchParams.get('session') || 'default'
+// ─── Cookie 提取端点 ─────────────────────────────────
+// 注意：此函数从未被 Next.js 路由系统调用（不在 GET/POST 导出中），
+// 实际 Cookie 提取需走 /api/waos/brain/extract 端点。
+// 保留作为参考实现，未来可重构为独立路由。
+export async function extract(_req: NextRequest) {
+  const sessionId = _req.nextUrl.searchParams.get('session') || 'default'
   const session = sessionCookies.get(sessionId)
   if (!session) {
     return NextResponse.json({ error: 'no session' }, { status: 404 })

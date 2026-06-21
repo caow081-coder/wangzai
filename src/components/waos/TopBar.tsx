@@ -77,7 +77,6 @@ export function TopBar() {
       {/* 1. Logo — 旺财 */}
       <div className="flex items-center gap-2 shrink-0">
         <div className="w-8 h-8 rounded-lg overflow-hidden shadow-sm ring-1 ring-emerald-500/20">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/wangcai-logo.png" alt="旺财" className="w-full h-full object-cover" />
         </div>
         <span className="font-bold text-[15px] tracking-tight hidden sm:inline bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">旺财</span>

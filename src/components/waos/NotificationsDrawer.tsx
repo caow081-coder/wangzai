@@ -102,8 +102,12 @@ export function NotificationsDrawer() {
                 return (
                   <li
                     key={n.id}
-                    onClick={() => handleClick(n)}
                     className={`px-3 py-2.5 cursor-pointer hover:bg-[oklch(1_0_0/4%)] transition-colors group ${!n.read ? meta.bg + ' border-l-2 border-l-' + n.level : 'border-l-2 border-l-transparent'}`}
+                    onClick={() => handleClick(n)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(n) } }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${n.title}${n.leadName ? ' · ' + n.leadName : ''}，${meta.label}${!n.read ? '（未读）' : ''}`}
                   >
                     <div className="flex items-start gap-2">
                       <div className={`shrink-0 w-7 h-7 rounded-full ${meta.bg} ${meta.border} border flex items-center justify-center ${meta.color}`}>

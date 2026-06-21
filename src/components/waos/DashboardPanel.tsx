@@ -161,7 +161,7 @@ export function DashboardPanel() {
     leads.forEach(l => {
       (l.messages || []).forEach(m => {
         if (m.role === 'ai' || m.role === 'assistant') aiCount++
-        else if (m.role === 'human' || m.role === 'operator') humanCount++
+        else if (m.role === 'human') humanCount++
       })
     })
     // 兜底：metrics.llmCalls + metrics.humanHandoffs

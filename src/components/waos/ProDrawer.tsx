@@ -633,7 +633,7 @@ function LLMProviderPanel() {
                   <input
                     type="text"
                     defaultValue={p.config.apiUrl}
-                    onBlur={(e) => updateProvider(p.id, { config: { ...p.config, apiUrl: e.target.value } as any })}
+                    onBlur={(e) => updateProvider(p.id, { config: { ...p.config, apiUrl: e.target.value } })}
                     className="flex-1 px-2 py-1 text-[10px] rounded bg-secondary/50 border border-border/40 focus:outline-none focus:border-primary/40 font-mono"
                     placeholder="https://api.openai.com/v1"
                   />
@@ -646,7 +646,7 @@ function LLMProviderPanel() {
                   <input
                     type="password"
                     defaultValue={p.config.apiKey}
-                    onBlur={(e) => updateProvider(p.id, { config: { ...p.config, apiKey: e.target.value } as any })}
+                    onBlur={(e) => updateProvider(p.id, { config: { ...p.config, apiKey: e.target.value } })}
                     className="flex-1 px-2 py-1 text-[10px] rounded bg-secondary/50 border border-border/40 focus:outline-none focus:border-primary/40 font-mono"
                     placeholder="sk-..."
                   />
@@ -659,7 +659,7 @@ function LLMProviderPanel() {
                   <input
                     type="text"
                     defaultValue={p.config.model}
-                    onBlur={(e) => updateProvider(p.id, { config: { ...p.config, model: e.target.value } as any })}
+                    onBlur={(e) => updateProvider(p.id, { config: { ...p.config, model: e.target.value } })}
                     className="flex-1 px-2 py-1 text-[10px] rounded bg-secondary/50 border border-border/40 focus:outline-none focus:border-primary/40 font-mono"
                     placeholder="gpt-4o-mini / qwen2:7b / glm-4"
                   />
@@ -672,7 +672,7 @@ function LLMProviderPanel() {
                   <input
                     type="text"
                     defaultValue={p.config.localUrl}
-                    onBlur={(e) => updateProvider(p.id, { config: { ...p.config, localUrl: e.target.value } as any })}
+                    onBlur={(e) => updateProvider(p.id, { config: { ...p.config, localUrl: e.target.value } })}
                     className="flex-1 px-2 py-1 text-[10px] rounded bg-secondary/50 border border-border/40 focus:outline-none focus:border-primary/40 font-mono"
                     placeholder="http://localhost:11434"
                   />
@@ -685,7 +685,7 @@ function LLMProviderPanel() {
                   <input
                     type="password"
                     defaultValue={p.config.cookie}
-                    onBlur={(e) => updateProvider(p.id, { config: { ...p.config, cookie: e.target.value } as any })}
+                    onBlur={(e) => updateProvider(p.id, { config: { ...p.config, cookie: e.target.value } })}
                     className="flex-1 px-2 py-1 text-[10px] rounded bg-secondary/50 border border-border/40 focus:outline-none focus:border-primary/40 font-mono"
                     placeholder="从浏览器F12复制Cookie..."
                   />
@@ -782,7 +782,7 @@ function LLMProviderPanel() {
               className="flex-1 px-2 py-1 text-[10px] rounded bg-card border border-border/40 focus:outline-none focus:border-emerald-500/40 font-mono"
               onBlur={(e) => {
                 const p = providers.find(p => p.id === 'groq')
-                if (p) updateProvider('groq', { config: { ...p.config, apiKey: e.target.value } as any, enabled: !!e.target.value })
+                if (p) updateProvider('groq', { config: { ...p.config, apiKey: e.target.value }, enabled: !!e.target.value })
               }}
             />
             <button
@@ -1235,7 +1235,7 @@ function DashboardInlineView() {
   let humanCount = 0
   leads.forEach(l => (l.messages || []).forEach(m => {
     if (m.role === 'ai' || m.role === 'assistant') aiCount++
-    else if (m.role === 'human' || m.role === 'operator') humanCount++
+    else if (m.role === 'human') humanCount++
   }))
   if (aiCount === 0 && humanCount === 0) {
     aiCount = metrics.llmCalls || 1

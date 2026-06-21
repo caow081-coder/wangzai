@@ -19,11 +19,31 @@ import { getZAI } from '@/lib/zai'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: NextRequest) {
-  const { image, question = '请描述这张图片的内容', provider = 'zai', config = {} } = await req.json()
+interface VLMConfig {
+  apiUrl?: string
+  apiKey?: string
+  model?: string
+  cookie?: string
+  dockerUrl?: string
+  timeout?: number
+}
 
-  if (!image) {
+export async function POST(req: NextRequest) {
+  let body: { image?: string; question?: string; provider?: string; config?: VLMConfig }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+  const { image, question = '请描述这张图片的内容', provider = 'zai', config = {} } = body || {}
+
+  if (!image || typeof image !== 'string') {
     return NextResponse.json({ error: 'image required (base64 or URL)' }, { status: 400 })
+  }
+
+  // 防止超大 base64 图片导致 OOM（限制 ~10MB base64）
+  if (image.length > 10 * 1024 * 1024) {
+    return NextResponse.json({ error: 'image too large (max 10MB base64)' }, { status: 413 })
   }
 
   const startedAt = Date.now()

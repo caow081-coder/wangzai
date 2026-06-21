@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   const source = req.nextUrl.searchParams.get('source')
 
   try {
-    const where: any = {}
+    const where: { stage?: string; source?: string } = {}
     if (stage) where.stage = stage
     if (source) where.source = source
 
@@ -34,8 +34,13 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json()
-    const { externalId, source, userName, lastMessage } = body
+    let body: { externalId?: string; source?: string; userName?: string; lastMessage?: string }
+    try {
+      body = await req.json()
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+    }
+    const { externalId, source, userName, lastMessage } = body || {}
 
     if (!externalId || !source) {
       return NextResponse.json({ error: 'externalId and source required' }, { status: 400 })

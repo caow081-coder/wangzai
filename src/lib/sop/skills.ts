@@ -284,6 +284,8 @@ const scheduleFollowupDef: SkillDefinition = {
 }
 
 // 内存定时任务存储（重启后清空，生产环境应持久化到 DB）
+// AUDIT-SYS: 限制最大任务数，防止无限增长 OOM
+const MAX_FOLLOWUP_TASKS = 500
 const followupTasks = new Map<string, { customerId: string; scheduledAt: number; reason: string; timer: NodeJS.Timeout }>()
 
 export const scheduleFollowupSkill: Skill = {
@@ -299,9 +301,16 @@ export const scheduleFollowupSkill: Skill = {
       // 设置定时器（生产环境应持久化 + 用 cron 调度）
       const timer = setTimeout(() => {
         console.log(`[SOP] 定时跟进触发: ${taskId} 客户 ${ctx.customerId} 原因 ${reason}`)
+        // 触发后从 Map 移除，避免长期累积
+        followupTasks.delete(taskId)
         // TODO: 触发新的 SOP 实例或通知人工
       }, delayMs)
 
+      // AUDIT-SYS: 超上限时拒绝创建新任务，避免 OOM
+      if (followupTasks.size >= MAX_FOLLOWUP_TASKS) {
+        clearTimeout(timer)
+        return fail(`定时跟进任务数已达上限 (${MAX_FOLLOWUP_TASKS})，请稍后重试`, start)
+      }
       followupTasks.set(taskId, { customerId: ctx.customerId, scheduledAt, reason, timer })
       return ok({ taskId, scheduledAt, reason }, start)
     } catch (e) {

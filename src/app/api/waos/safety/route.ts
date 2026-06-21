@@ -18,6 +18,7 @@ import {
 } from '@/lib/safety'
 
 export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET() {
   return NextResponse.json({
@@ -42,7 +43,15 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { input, output } = await req.json()
+  let input: string | undefined
+  let output: string | undefined
+  try {
+    const body = await req.json()
+    input = body?.input
+    output = body?.output
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
   const result: {
     inputSanitized: boolean
     inputReason?: string
@@ -53,7 +62,7 @@ export async function POST(req: NextRequest) {
     safeOutput?: string
   } = { inputSanitized: true, outputFiltered: false }
 
-  if (input) {
+  if (input && typeof input === 'string') {
     const r = sanitizeInput(input)
     result.inputSanitized = r.ok
     if (!r.ok) {
@@ -61,7 +70,7 @@ export async function POST(req: NextRequest) {
       result.inputLayer = r.layer
     }
   }
-  if (output) {
+  if (output && typeof output === 'string') {
     const r = filterOutput(output)
     result.outputFiltered = r.filtered
     result.safeOutput = r.safe

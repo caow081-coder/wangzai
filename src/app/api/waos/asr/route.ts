@@ -14,10 +14,21 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
-  const { audio, format = 'mp3' } = await req.json()
+  let body: { audio?: string; format?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+  const { audio, format = 'mp3' } = body || {}
 
-  if (!audio) {
+  if (!audio || typeof audio !== 'string') {
     return NextResponse.json({ error: 'audio required (base64)' }, { status: 400 })
+  }
+
+  // 防止超大音频 base64 导致 OOM（限制 ~10MB base64 ≈ 7.5MB 二进制）
+  if (audio.length > 10 * 1024 * 1024) {
+    return NextResponse.json({ error: 'audio too large (max 10MB base64)' }, { status: 413 })
   }
 
   const startedAt = Date.now()
@@ -29,7 +40,9 @@ export async function POST(req: NextRequest) {
     })
 
     return NextResponse.json({
+      success: true,
       text,
+      format,
       latency: Date.now() - startedAt,
     })
   } catch (err) {

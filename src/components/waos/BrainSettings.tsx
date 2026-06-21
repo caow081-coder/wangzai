@@ -103,8 +103,7 @@ export function BrainSettings() {
       if (checkInterval) { clearInterval(checkInterval); setCheckInterval(null) }
       if (loginWindowRef && !loginWindowRef.closed) loginWindowRef.close()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brainOpen])
+  }, [brainOpen, checkInterval, loginWindowRef])
 
   // 卸载清理
   useEffect(() => {
@@ -112,7 +111,7 @@ export function BrainSettings() {
       if (checkInterval) clearInterval(checkInterval)
       if (loginWindowRef && !loginWindowRef.closed) loginWindowRef.close()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 仅在卸载时执行一次，无需追踪 checkInterval/loginWindowRef
   }, [])
 
   if (!brainOpen) return null

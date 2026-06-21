@@ -143,9 +143,14 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json()
+  let body: { action?: string; serviceId?: string; cookie?: string; apiKey?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
   // 兼容 action 缺失时的清晰报错
-  const { action, serviceId, cookie, apiKey } = body
+  const { action, serviceId, cookie, apiKey } = body || {}
 
   if (!action) {
     return NextResponse.json({
@@ -154,60 +159,66 @@ export async function POST(req: NextRequest) {
     }, { status: 400 })
   }
 
-  switch (action) {
-    case 'check-cookie': {
-      if (!cookie) {
-        return NextResponse.json({ valid: false, reason: 'Cookie 为空' })
-      }
-      const hasSessionId = cookie.includes('sessionid')
-      const hasSidGuard = cookie.includes('sid_guard') || cookie.includes('sid_tt')
-      const valid = hasSessionId || hasSidGuard
-      return NextResponse.json({
-        valid,
-        reason: valid ? 'Cookie 格式正确' : 'Cookie 缺少 sessionid 或 sid_guard 字段',
-        fields: { sessionid: hasSessionId, sid_guard: cookie.includes('sid_guard'), sid_tt: cookie.includes('sid_tt') },
-        tip: valid ? '建议配置多个 Cookie 轮询防风控' : '请重新登录 doubao.com 获取完整 Cookie',
-      })
-    }
-
-    case 'check-docker': {
-      const service = REVERSE_SERVICES.find(s => s.id === serviceId)
-      if (!service?.dockerRequired) {
-        return NextResponse.json({ running: true, message: '该服务无需 Docker' })
-      }
-      try {
-        const endpoint = service.apiEndpoint?.replace('/v1', '') || ''
-        const res = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(3000) }).catch(() => null)
+  try {
+    switch (action) {
+      case 'check-cookie': {
+        if (!cookie) {
+          return NextResponse.json({ valid: false, reason: 'Cookie 为空' })
+        }
+        const hasSessionId = cookie.includes('sessionid')
+        const hasSidGuard = cookie.includes('sid_guard') || cookie.includes('sid_tt')
+        const valid = hasSessionId || hasSidGuard
         return NextResponse.json({
-          running: res?.ok || false,
-          endpoint: service.apiEndpoint,
-          message: res?.ok ? 'Docker 逆向服务运行中' : `Docker 未启动。镜像: ${service.dockerImage}`,
+          valid,
+          reason: valid ? 'Cookie 格式正确' : 'Cookie 缺少 sessionid 或 sid_guard 字段',
+          fields: { sessionid: hasSessionId, sid_guard: cookie.includes('sid_guard'), sid_tt: cookie.includes('sid_tt') },
+          tip: valid ? '建议配置多个 Cookie 轮询防风控' : '请重新登录 doubao.com 获取完整 Cookie',
         })
-      } catch {
-        return NextResponse.json({ running: false, message: `Docker 服务未启动` })
       }
-    }
 
-    case 'generate-compose': {
-      const service = REVERSE_SERVICES.find(s => s.id === serviceId)
-      if (!service?.dockerCompose) {
-        return NextResponse.json({ error: '该服务不支持 Docker' }, { status: 400 })
+      case 'check-docker': {
+        const service = REVERSE_SERVICES.find(s => s.id === serviceId)
+        if (!service?.dockerRequired) {
+          return NextResponse.json({ running: true, message: '该服务无需 Docker' })
+        }
+        try {
+          const endpoint = service.apiEndpoint?.replace('/v1', '') || ''
+          const res = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(3000) }).catch(() => null)
+          return NextResponse.json({
+            running: res?.ok || false,
+            endpoint: service.apiEndpoint,
+            message: res?.ok ? 'Docker 逆向服务运行中' : `Docker 未启动。镜像: ${service.dockerImage}`,
+          })
+        } catch {
+          return NextResponse.json({ running: false, message: `Docker 服务未启动` })
+        }
       }
-      // Cookie 可能是单个或多个（逗号分隔），两种占位符都替换
-      const cookieValue = cookie || 'YOUR_COOKIE_HERE'
-      const firstCookie = cookieValue.split(',')[0].trim()
-      const multiCookieValue = cookieValue.includes(',') ? cookieValue : `${cookieValue},COOKIE2,COOKIE3`
-      const compose = service.dockerCompose
-        .replace(/__COOKIE__/g, firstCookie)
-        .replace(/__MULTI_COOKIE__/g, multiCookieValue)
-      return NextResponse.json({
-        dockerCompose: compose,
-        filename: 'docker-compose.reverse.yml',
-        instructions: ['保存为 docker-compose.reverse.yml', '运行 docker compose up -d', '等待 5 秒后点测试连接'],
-      })
-    }
 
-    default:
-      return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 })
+      case 'generate-compose': {
+        const service = REVERSE_SERVICES.find(s => s.id === serviceId)
+        if (!service?.dockerCompose) {
+          return NextResponse.json({ error: '该服务不支持 Docker' }, { status: 400 })
+        }
+        // Cookie 可能是单个或多个（逗号分隔），两种占位符都替换
+        const cookieValue = cookie || 'YOUR_COOKIE_HERE'
+        const firstCookie = cookieValue.split(',')[0].trim()
+        const multiCookieValue = cookieValue.includes(',') ? cookieValue : `${cookieValue},COOKIE2,COOKIE3`
+        const compose = service.dockerCompose
+          .replace(/__COOKIE__/g, firstCookie)
+          .replace(/__MULTI_COOKIE__/g, multiCookieValue)
+        return NextResponse.json({
+          dockerCompose: compose,
+          filename: 'docker-compose.reverse.yml',
+          instructions: ['保存为 docker-compose.reverse.yml', '运行 docker compose up -d', '等待 5 秒后点测试连接'],
+        })
+      }
+
+      default:
+        return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 })
+    }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    console.error(`[REVERSE] action=${action} 失败:`, errMsg)
+    return NextResponse.json({ action, error: errMsg }, { status: 500 })
   }
 }

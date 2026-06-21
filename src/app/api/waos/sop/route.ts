@@ -30,7 +30,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ definitions: defs, count: defs.length })
     }
     if (view === 'definition') {
-      const id = url.searchParams.get('id')!
+      const id = url.searchParams.get('id')
+      if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
       const def = await getSopDefinition(id)
       if (!def) return NextResponse.json({ error: '未找到' }, { status: 404 })
       return NextResponse.json({ definition: def })
@@ -52,7 +53,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ instances, count: instances.length })
     }
     if (view === 'instance_logs') {
-      const id = url.searchParams.get('id')!
+      const id = url.searchParams.get('id')
+      if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
       const logs = await getInstanceLogs(id)
       return NextResponse.json({ logs, count: logs.length })
     }

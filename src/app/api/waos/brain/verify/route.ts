@@ -24,9 +24,15 @@ interface VerifyRequest {
 }
 
 export async function POST(req: NextRequest) {
-  const { model, cookie } = (await req.json()) as VerifyRequest
+  let body: VerifyRequest
+  try {
+    body = (await req.json()) as VerifyRequest
+  } catch {
+    return NextResponse.json({ valid: false, message: 'Invalid JSON body' }, { status: 400 })
+  }
+  const { model, cookie } = body || {}
 
-  if (!model || !cookie) {
+  if (!model || !cookie || typeof cookie !== 'string') {
     return NextResponse.json({ valid: false, message: 'model and cookie required' }, { status: 400 })
   }
 

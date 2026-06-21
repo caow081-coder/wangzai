@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getZAI } from '@/lib/zai'
+import { filterOutput } from '@/lib/safety'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -386,11 +387,16 @@ async function callWithFallback(
 
 // ─── API 路由 ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  const body = await req.json()
-  const { messages, model = 'auto', cookies = {} } = body
+  let body: { messages?: ChatMessage[]; model?: string; cookies?: Record<string, string> }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+  const { messages, model = 'auto', cookies = {} } = body || {}
 
-  if (!messages?.length) {
-    return NextResponse.json({ error: 'messages required' }, { status: 400 })
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return NextResponse.json({ error: 'messages required (non-empty array)' }, { status: 400 })
   }
 
   const startedAt = Date.now()
@@ -414,10 +420,17 @@ export async function POST(req: NextRequest) {
   try {
     const result = await callWithFallback(messages, cookies, model)
 
-    // 写入缓存
+    // 安全过滤：对模型输出做 SafetyShield 二次过滤（防价格承诺/违规词/高危词）
+    const filtered = filterOutput(result.text)
+    const safeReply = filtered.safe
+    if (filtered.filtered) {
+      console.warn(`[BRAIN] 输出被安全过滤: model=${result.model} reason=${filtered.reason}`)
+    }
+
+    // 写入缓存（缓存过滤后版本，避免重复过滤）
     if (lastMsg.length > 5) {
-      replyCache.set(cacheKey, { reply: result.text, ts: Date.now() })
-      // 清理过期缓存
+      replyCache.set(cacheKey, { reply: safeReply, ts: Date.now() })
+      // 清理过期缓存（防止 Map 无限增长）
       if (replyCache.size > 100) {
         for (const [k, v] of replyCache) {
           if (Date.now() - v.ts > CACHE_TTL) replyCache.delete(k)
@@ -426,12 +439,15 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      reply: result.text,
+      success: true,
+      reply: safeReply,
       model: result.model,
       fallback_chain: result.fallbacks,
       fallback_count: result.fallbacks.length - 1,
       latency: Date.now() - startedAt,
-      tokensUsed: Math.ceil(result.text.length / 4),
+      tokensUsed: Math.ceil(safeReply.length / 4),
+      safetyFiltered: filtered.filtered,
+      safetyReason: filtered.reason,
     })
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : 'unknown'

@@ -11,6 +11,8 @@
  */
 
 // 执行队列 (所有 UI 操作排队执行)
+// AUDIT-SYS: 限制最大队列长度，防止无限增长导致 OOM
+const MAX_QUEUE_SIZE = 100
 const executionQueue = []
 let executing = false
 
@@ -28,6 +30,8 @@ const sendCounts = new Map()  // platform → { count, windowStart }
 const RETRY_CONFIG = {
   maxRetries: 3,
   backoffMs: 2000,  // 指数退避基数
+  // AUDIT-SYS: rate limit 退避上限，避免单个任务阻塞整个队列 60s
+  maxRateLimitWaitMs: 5000,
 }
 
 /**
@@ -54,8 +58,14 @@ function checkRateLimit(platform) {
 
 /**
  * 加入执行队列
+ * AUDIT-SYS: 队列长度超限时直接拒绝，避免 OOM
  */
 async function enqueue(action) {
+  if (executionQueue.length >= MAX_QUEUE_SIZE) {
+    const err = new Error(`执行队列已满 (${MAX_QUEUE_SIZE})，请稍后重试`)
+    err.code = 'QUEUE_FULL'
+    throw err
+  }
   return new Promise((resolve, reject) => {
     executionQueue.push({ action, resolve, reject })
     processQueue()
@@ -103,6 +113,14 @@ async function executeWithRetry(action) {
       // 2. 节流检查
       const rateCheck = checkRateLimit(action.platform)
       if (!rateCheck.allowed) {
+        // AUDIT-SYS: 限制最大等待时间，避免单个 rate-limited 任务阻塞整个队列
+        const waitMs = Math.min(rateCheck.retryAfter || 0, RETRY_CONFIG.maxRateLimitWaitMs)
+        if (waitMs < (rateCheck.retryAfter || 0)) {
+          console.warn(`[Sandbox] 节流限制，原需等 ${(rateCheck.retryAfter || 0) / 1000}s，截断为 ${waitMs / 1000}s 后跳过本轮重试`)
+          await new Promise(r => setTimeout(r, waitMs))
+          // 直接抛错让上层重试，不再在本任务内死等
+          throw new Error(`节流限制，需等待 ${(rateCheck.retryAfter || 0) / 1000}s 后重试`)
+        }
         console.warn(`[Sandbox] 节流限制, ${rateCheck.retryAfter}ms 后重试`)
         await new Promise(r => setTimeout(r, rateCheck.retryAfter))
         continue

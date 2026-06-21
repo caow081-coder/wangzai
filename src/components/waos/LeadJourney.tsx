@@ -122,7 +122,8 @@ export function LeadJourney() {
     events
       .filter(e => e.payload?.leadId === lead.id && e.type === 'state.transition')
       .forEach(e => {
-        const { to, from } = e.payload
+        const { to, from } = e.payload as { to?: string; from?: string }
+        if (!to) return
         const meta = STAGE_NODES.find(n => n.stage === to)
         if (meta && !nodeMap.has(to)) {
           nodeMap.set(to, {

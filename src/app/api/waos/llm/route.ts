@@ -42,10 +42,15 @@ interface LLMRequest {
 }
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as LLMRequest & { providerId?: string }
+  let body: LLMRequest & { providerId?: string }
+  try {
+    body = (await req.json()) as LLMRequest & { providerId?: string }
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
   // 兼容 provider / providerId 两种字段名（防御式编程）
-  const provider = body.provider || body.providerId
-  const { messages, config = {} } = body
+  const provider = body?.provider || body?.providerId
+  const { messages, config = {} } = body || {}
 
   if (!provider) {
     return NextResponse.json({ error: 'provider required (or providerId)' }, { status: 400 })

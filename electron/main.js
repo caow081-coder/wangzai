@@ -30,6 +30,7 @@ let streamProcess = null
 // 使用 electron-updater 从 GitHub Releases 拉取 latest.yml 比对版本。
 // 开发模式（!app.isPackaged）下 autoUpdater 保持 null，所有 IPC 返回降级响应。
 let autoUpdater = null
+let updaterInterval = null  // AUDIT-SYS: 跟踪定时器，退出时清理避免内存泄漏
 if (!isDev) {
   try {
     autoUpdater = require('electron-updater').autoUpdater
@@ -155,9 +156,10 @@ async function startStreamService() {
   const streamPath = path.join(__dirname, '..', 'mini-services', 'waos-stream')
   console.log(`[WAOS-Desktop] Starting stream service from ${streamPath}`)
 
-  // 使用 bun 启动（开发环境）或 node（生产环境如果 bun 不可用）
-  const cmd = isDev ? 'bun' : 'bun'
-  const args = isDev ? ['run', 'dev'] : ['run', 'dev']
+  // AUDIT-SYS: 简化 dead code（原 isDev ? 'bun' : 'bun' 两分支完全相同）
+  // 外部 stream service 仅在开发模式触发（生产模式走内联 stream-service.js）
+  const cmd = 'bun'
+  const args = ['run', 'dev']
 
   streamProcess = spawn(cmd, args, {
     cwd: streamPath,
@@ -371,7 +373,7 @@ app.whenReady().then(async () => {
     }, 3000)
 
     // 每 4 小时检查一次
-    setInterval(() => {
+    updaterInterval = setInterval(() => {
       autoUpdater.checkForUpdates().catch(() => {})
     }, 4 * 60 * 60 * 1000)
   }
@@ -399,11 +401,25 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  // AUDIT-SYS: 清理 autoUpdater 定时器，避免内存泄漏
+  if (updaterInterval) {
+    clearInterval(updaterInterval)
+    updaterInterval = null
+  }
+  // AUDIT-SYS: 销毁所有 BrowserView，避免 webContents 泄漏
+  try {
+    uiActuation.destroyAllViews()
+  } catch (err) {
+    console.error('[WAOS-Desktop] 销毁 BrowserView 失败:', err.message)
+  }
+  // 清理子进程（使用 SIGTERM，Windows 下回退到 taskkill）
   if (nextProcess) {
-    nextProcess.kill()
+    try { nextProcess.kill() } catch (_) { /* noop */ }
+    nextProcess = null
   }
   if (streamProcess) {
-    streamProcess.kill()
+    try { streamProcess.kill() } catch (_) { /* noop */ }
+    streamProcess = null
   }
 })
 
@@ -461,6 +477,23 @@ async function checkLoginStatus(model, loginUrl) {
 
 // IPC: 打开平台登录窗口
 ipcMain.handle('login-platform', async (event, { model, loginUrl }) => {
+  // AUDIT-SYS: 校验 loginUrl 协议白名单，防止 file:// / javascript: 等危险协议
+  const ALLOWED_PROTOCOLS = ['https:', 'http:']
+  const ALLOWED_DOMAINS = ['www.doubao.com', 'doubao.com', 'qwen.aliyun.com', 'aliyun.com', 'kimi.moonshot.cn', 'moonshot.cn', 'chatglm.cn', 'zhipuai.cn']
+  try {
+    const parsed = new URL(loginUrl)
+    if (!ALLOWED_PROTOCOLS.includes(parsed.protocol)) {
+      return { cookie: '', valid: false, error: `不允许的协议: ${parsed.protocol}` }
+    }
+    // 开发环境允许 localhost
+    const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
+    if (!isLocalhost && !ALLOWED_DOMAINS.some(d => parsed.hostname === d || parsed.hostname.endsWith('.' + d))) {
+      return { cookie: '', valid: false, error: `不允许的域名: ${parsed.hostname}` }
+    }
+  } catch (err) {
+    return { cookie: '', valid: false, error: `loginUrl 格式无效: ${err.message}` }
+  }
+
   console.log(`[WAOS-Desktop] 打开 ${model} 登录窗口: ${loginUrl}`)
 
   return new Promise((resolve) => {

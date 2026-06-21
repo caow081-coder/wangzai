@@ -6,7 +6,23 @@
 
 import { db } from '@/lib/db'
 
-const STOP_WORDS = new Set(['的', '了', '是', '在', '我', '你', '他', '她', '它', '们', '这', '那', '有', '个', '和', '与', '或', '也', '都', '就', '不', '没', '很', '太', '能', '会', '要', '想', '可以', '什么', '怎么', '多少', '为什么', '哪里', '哪个', '请问', '一下', '可能', '应该'])
+// AUDIT-SYS: 扩充停用词，覆盖更多中文常见虚词/语气词/单字（原列表仅 40 词，遗漏较多）
+const STOP_WORDS = new Set([
+  // 原有词
+  '的', '了', '是', '在', '我', '你', '他', '她', '它', '们', '这', '那', '有', '个', '和', '与', '或', '也', '都', '就', '不', '没', '很', '太', '能', '会', '要', '想', '可以', '什么', '怎么', '多少', '为什么', '哪里', '哪个', '请问', '一下', '可能', '应该',
+  // 新增虚词/代词/语气词
+  '啊', '哦', '嗯', '呀', '哎', '唉', '哈', '嘛', '吧', '呢', '哇', '哟', '喔', '噢',
+  '里', '上', '下', '中', '内', '外', '前', '后', '左', '右', '间',
+  '大', '小', '多', '少', '高', '低', '长', '短', '好', '坏',
+  '一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '百', '千', '万', '亿',
+  '说', '做', '看', '听', '走', '来', '去', '到', '过', '为', '给', '对',
+  '那个', '这个', '那些', '这些', '那样', '这样', '那种', '这种',
+  '已经', '正在', '将要', '刚才', '现在', '以前', '以后', '期间',
+  '但是', '可是', '不过', '只是', '只有', '除非', '虽然', '尽管', '即使',
+  '因为', '所以', '因此', '于是', '然后', '接着',
+  '如果', '假如', '要是', '万一',
+  '比较', '非常', '十分', '相当', '极其', '格外',
+])
 
 function tokenize(text: string): string[] {
   const clean = text.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, ' ').toLowerCase()
@@ -28,6 +44,10 @@ const docVectors = new Map<string, Map<string, number>>()
 let docCount = 0
 const df = new Map<string, number>()
 let initialized = false
+// AUDIT-SYS: 初始化互斥锁，防止并发 ensureInitialized 导致 docVectors/df Map 竞态写入
+//   场景：两个 search 请求同时到达，均检测到 initialized=false，同时触发 findMany+计算
+//   修复：用 promise 复用，第二次调用复用第一次的 in-flight Promise
+let initializingPromise: Promise<void> | null = null
 
 function computeTfIdf(tokens: string[], dfMap: Map<string, number>, totalDocs: number): Map<string, number> {
   const tf = new Map<string, number>()
@@ -56,18 +76,30 @@ function cosineSimilarity(v1: Map<string, number>, v2: Map<string, number>): num
 
 async function ensureInitialized() {
   if (initialized) return
-  const docs = await db.knowledgeDoc.findMany({ select: { id: true, keywords: true, content: true } })
-  docCount = docs.length
-  df.clear()
-  docVectors.clear()
-  for (const doc of docs) {
-    const tokens = tokenize(doc.keywords + ' ' + doc.content)
-    const uniqueTokens = new Set(tokens)
-    for (const t of uniqueTokens) df.set(t, (df.get(t) || 0) + 1)
-    docVectors.set(doc.id, computeTfIdf(tokens, df, docCount))
+  // AUDIT-SYS: 复用 in-flight Promise，避免并发初始化
+  if (initializingPromise) {
+    await initializingPromise
+    return
   }
-  initialized = true
-  console.log(`[RAG] 已加载 ${docCount} 个文档，${df.size} 个唯一词`)
+  initializingPromise = (async () => {
+    const docs = await db.knowledgeDoc.findMany({ select: { id: true, keywords: true, content: true } })
+    docCount = docs.length
+    df.clear()
+    docVectors.clear()
+    for (const doc of docs) {
+      const tokens = tokenize(doc.keywords + ' ' + doc.content)
+      const uniqueTokens = new Set(tokens)
+      for (const t of uniqueTokens) df.set(t, (df.get(t) || 0) + 1)
+      docVectors.set(doc.id, computeTfIdf(tokens, df, docCount))
+    }
+    initialized = true
+    console.log(`[RAG] 已加载 ${docCount} 个文档，${df.size} 个唯一词`)
+  })()
+  try {
+    await initializingPromise
+  } finally {
+    initializingPromise = null
+  }
 }
 
 export interface SearchResult {
@@ -78,38 +110,64 @@ export interface SearchResult {
 
 export async function search(query: string, options: { topK?: number; category?: string; minScore?: number } = {}): Promise<SearchResult[]> {
   await ensureInitialized()
-  const { topK = 5, category, minScore = 0.05 } = options
+  // AUDIT-SYS: 提高 minScore 默认值至 0.10，过滤低相关结果（原 0.05 几乎匹配任意文档）
+  const { topK = 5, category, minScore = 0.10 } = options
   if (!query.trim()) return []
   const queryTokens = tokenize(query)
   if (queryTokens.length === 0) return []
   const queryVector = computeTfIdf(queryTokens, df, docCount)
 
-  const results: SearchResult[] = []
+  // AUDIT-SYS: 修复 N+1 查询。原实现对每个 docId 单独 findUnique，N 个文档发 N 次 DB 查询。
+  //   改为：先算分 → 排序 → 取 topK*2（冗余）→ 一次性 where: { id: { in: [...] } } 批量查询
+  const scoredIds: Array<{ docId: string; sim: number }> = []
   for (const [docId, docVec] of docVectors) {
     const sim = cosineSimilarity(queryVector, docVec)
     if (sim < minScore) continue
-    const doc = await db.knowledgeDoc.findUnique({
-      where: { id: docId },
-      select: { id: true, title: true, content: true, category: true, tags: true, priority: true, keywords: true },
-    })
+    scoredIds.push({ docId, sim })
+  }
+  scoredIds.sort((a, b) => b.sim - a.sim)
+  const candidateIds = scoredIds.slice(0, (topK || 5) * 2).map(s => s.docId)
+  if (candidateIds.length === 0) return []
+
+  const docRows = await db.knowledgeDoc.findMany({
+    where: { id: { in: candidateIds } },
+    select: { id: true, title: true, content: true, category: true, tags: true, priority: true, keywords: true },
+  })
+  const docMap = new Map(docRows.map(d => [d.id, d]))
+
+  const results: SearchResult[] = []
+  for (const { docId, sim } of scoredIds) {
+    const doc = docMap.get(docId)
     if (!doc) continue
     if (category && doc.category !== category) continue
     const matchedKeywords = queryTokens.filter(t => doc.keywords.includes(t) || doc.content.includes(t))
     results.push({
-      doc: { id: doc.id, title: doc.title, content: doc.content, category: doc.category, tags: JSON.parse(doc.tags || '[]'), priority: doc.priority },
+      doc: { id: doc.id, title: doc.title, content: doc.content, category: doc.category, tags: safeParseTags(doc.tags), priority: doc.priority },
       score: sim,
       matchedKeywords: [...new Set(matchedKeywords)].slice(0, 10),
     })
+    if (results.length >= topK) break
   }
+  // 按相关性 × 优先级排序
   results.sort((a, b) => (b.score * b.doc.priority) - (a.score * a.doc.priority))
-  const topResults = results.slice(0, topK)
-  if (topResults.length > 0) {
+  if (results.length > 0) {
     db.knowledgeDoc.updateMany({
-      where: { id: { in: topResults.map(r => r.doc.id) } },
+      where: { id: { in: results.map(r => r.doc.id) } },
       data: { hitCount: { increment: 1 } },
     }).catch(() => {})
   }
-  return topResults
+  return results
+}
+
+// AUDIT-SYS: 安全解析 JSON tags，避免 JSON.parse 异常导致整个 search 崩溃
+function safeParseTags(raw: string | null): string[] {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
 }
 
 export async function addDoc(data: { title: string; content: string; category?: string; tags?: string[]; keywords?: string; source?: string; priority?: number }): Promise<string> {

@@ -51,7 +51,6 @@ export function Splashscreen() {
       <div className="relative mb-6">
         <div className="absolute inset-0 rounded-full bg-emerald-400/30 blur-2xl animate-pulse" />
         <div className="relative w-32 h-32 rounded-full overflow-hidden border-4 border-white dark:border-zinc-700 shadow-2xl">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/wangcai-logo.png"
             alt="旺财"

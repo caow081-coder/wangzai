@@ -15,8 +15,23 @@ import { getSkillRegistry } from './registry'
 import type { SopDefinition, SopInstance, SopNodeLog, SkillContext, SopNode, SopEdge, InstanceStatus, NodeLogStatus } from './types'
 
 // ─── 内存实例缓存（同步访问用，DB 是持久化）─────────
+// AUDIT-SYS: 限制缓存大小，防止长时间运行后 OOM
+const MAX_INSTANCES_CACHE = 200
+const MAX_NODE_LOGS_CACHE = 200
 const instancesCache = new Map<string, SopInstance>()
 const nodeLogsCache = new Map<string, SopNodeLog[]>()
+
+// AUDIT-SYS: 实例级互斥锁，防止并发 runInstance 导致状态竞态
+const runningInstances = new Set<string>()
+
+// LRU 简易淘汰：插入时若超上限，删除最早的 key
+function cacheSet<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number) {
+  map.set(key, value)
+  if (map.size > maxSize) {
+    const firstKey = map.keys().next().value
+    if (firstKey !== undefined) map.delete(firstKey as K)
+  }
+}
 
 // ─── SOP 定义序列化/反序列化 ─────────────────────────────────────────────
 export function sopDefinitionFromDb(row: any): SopDefinition {
@@ -175,8 +190,8 @@ export async function createInstance(
   })
 
   const instance = sopInstanceFromDb(row)
-  instancesCache.set(instance.id, instance)
-  nodeLogsCache.set(instance.id, [])
+  cacheSet(instancesCache, instance.id, instance, MAX_INSTANCES_CACHE)
+  cacheSet(nodeLogsCache, instance.id, [], MAX_NODE_LOGS_CACHE)
   return instance
 }
 
@@ -291,27 +306,43 @@ async function executeNode(
         const { field, operator, value } = node.condition
         // 从 context 取字段值（支持点号嵌套，如 identity.value）
         const fieldValue = field.split('.').reduce((obj, key) => (obj as any)?.[key], instance.context)
+        // AUDIT-SYS: == / != 比较 null 时，undefined 归一化为 null，避免 "undefined !== null" 误判为 true
+        //   场景：模板用 {field:'reply', op:'!=', value:null} 判断"客户回复了?"
+        //   修复前：reply 字段从未设置时 fieldValue=undefined，"undefined !== null"→true→误判已回复
+        //   修复后：undefined 归一化为 null，"null !== null"→false→正确判断未回复
         let conditionMet = false
+        const normField = fieldValue === undefined ? null : fieldValue
+        const normValue = value === undefined ? null : value
         switch (operator) {
-          case '==': conditionMet = fieldValue === value; break
-          case '!=': conditionMet = fieldValue !== value; break
+          case '==': conditionMet = normField === normValue; break
+          case '!=': conditionMet = normField !== normValue; break
           case '>=': conditionMet = Number(fieldValue) >= Number(value); break
           case '<=': conditionMet = Number(fieldValue) <= Number(value); break
           case '>': conditionMet = Number(fieldValue) > Number(value); break
           case '<': conditionMet = Number(fieldValue) < Number(value); break
           case 'contains': conditionMet = String(fieldValue || '').includes(String(value)); break
         }
-        appendLog({ status: 'success', output: { field, fieldValue, operator, value, conditionMet } })
+        appendLog({ status: 'success', output: { field, fieldValue: normField, operator, value: normValue, conditionMet } })
         return { nextCondition: conditionMet ? 'yes' : 'no' }
       }
 
       case 'wait': {
         const waitMs = node.waitMs || 60000
-        appendLog({ status: 'success', output: { waitMs, message: `等待 ${waitMs / 1000}秒` } })
-        // 异步等待（不阻塞，仅记录，实际场景用 cron 续跑）
-        // 这里简化为同步等待（仅用于演示，生产应异步）
-        if (waitMs <= 5000) {
+        // AUDIT-SYS: 修复 wait 语义。原实现仅 waitMs<=5000 时 await，>5s 直接跳过破坏 SOP 流程。
+        //   新策略：
+        //   - waitMs <= 30s: 同步等待（适合演示和短流程）
+        //   - waitMs > 30s: 标记实例为 paused，写入 resumeAt，等待外部 cron 调用 resumeInstance 续跑
+        //   这样既不阻塞主线程过久，又不会丢失"等待"语义。
+        if (waitMs <= 30000) {
           await new Promise(r => setTimeout(r, waitMs))
+          appendLog({ status: 'success', output: { waitMs, message: `已等待 ${waitMs / 1000}秒` } })
+        } else {
+          const resumeAt = Date.now() + waitMs
+          appendLog({ status: 'success', output: { waitMs, resumeAt, message: `长等待 ${waitMs / 1000}秒，实例转为 paused，等待外部调度 resumeInstance` } })
+          // 标记实例暂停，外部调度器应在 resumeAt 后调用 resumeInstance
+          ;(instance.context as any).__resumeAt = resumeAt
+          ;(instance.context as any).__waitNodeId = node.id
+          return { shouldStop: true, stopStatus: 'paused' as InstanceStatus }
         }
         return { nextCondition: 'default' }
       }
@@ -342,77 +373,90 @@ async function executeNode(
 }
 
 // ─── 运行 SOP 实例（从头到尾，或到 wait/end）─────────
+// AUDIT-SYS: 加实例级互斥锁，防止同一实例并发执行导致 context/状态竞态
 export async function runInstance(instanceId: string): Promise<SopInstance> {
-  let instance = instancesCache.get(instanceId)
-  if (!instance) {
-    const row = await db.sopInstance.findUnique({
-      where: { id: instanceId },
-      include: { definition: true },
-    })
-    if (!row) throw new Error(`实例不存在: ${instanceId}`)
-    instance = sopInstanceFromDb(row)
-    instancesCache.set(instanceId, instance)
+  if (runningInstances.has(instanceId)) {
+    throw new Error(`实例 ${instanceId} 正在运行中，禁止并发执行`)
   }
+  runningInstances.add(instanceId)
 
-  const sop = await getSopDefinition(instance.sopDefinitionId)
-  if (!sop) throw new Error('SOP 定义已删除')
-
-  let currentNodeId = instance.currentNodeId
-  let safetyCounter = 0
-  const MAX_NODES = 50 // 防止死循环
-
-  while (currentNodeId && safetyCounter < MAX_NODES) {
-    safetyCounter++
-    const node = sop.nodes.find(n => n.id === currentNodeId)
-    if (!node) break
-
-    // 更新当前节点
-    instance.currentNodeId = currentNodeId
-    instance.updatedAt = Date.now()
-
-    const { nextCondition, shouldStop, stopStatus } = await executeNode(instance, sop, node)
-
-    // 持久化 context 更新
-    await db.sopInstance.update({
-      where: { id: instanceId },
-      data: {
-        currentNodeId,
-        context: JSON.stringify(instance.context),
-        status: shouldStop ? stopStatus : 'running',
-        completedAt: shouldStop ? new Date() : null,
-      },
-    })
-
-    if (shouldStop) {
-      instance.status = stopStatus || 'failed'
-      instance.completedAt = Date.now()
-      break
+  try {
+    let instance = instancesCache.get(instanceId)
+    if (!instance) {
+      const row = await db.sopInstance.findUnique({
+        where: { id: instanceId },
+        include: { definition: true },
+      })
+      if (!row) throw new Error(`实例不存在: ${instanceId}`)
+      instance = sopInstanceFromDb(row)
+      cacheSet(instancesCache, instanceId, instance, MAX_INSTANCES_CACHE)
     }
 
-    // 取下一个节点
-    const nextNodes = getNextNodes(sop, currentNodeId, nextCondition)
-    if (nextNodes.length === 0) {
-      // 无后续节点，自动完成
-      instance.status = 'completed'
-      instance.completedAt = Date.now()
+    const sop = await getSopDefinition(instance.sopDefinitionId)
+    if (!sop) throw new Error('SOP 定义已删除')
+
+    let currentNodeId = instance.currentNodeId
+    let safetyCounter = 0
+    const MAX_NODES = 50 // 防止死循环
+
+    while (currentNodeId && safetyCounter < MAX_NODES) {
+      safetyCounter++
+      const node = sop.nodes.find(n => n.id === currentNodeId)
+      if (!node) break
+
+      // 更新当前节点
+      instance.currentNodeId = currentNodeId
+      instance.updatedAt = Date.now()
+
+      const { nextCondition, shouldStop, stopStatus } = await executeNode(instance, sop, node)
+
+      // 持久化 context 更新
       await db.sopInstance.update({
         where: { id: instanceId },
-        data: { status: 'completed', completedAt: new Date(), currentNodeId: null },
+        data: {
+          currentNodeId,
+          context: JSON.stringify(instance.context),
+          status: shouldStop ? stopStatus : 'running',
+          completedAt: shouldStop && stopStatus !== 'paused' ? new Date() : null,
+        },
       })
-      break
+
+      if (shouldStop) {
+        instance.status = stopStatus || 'failed'
+        if (stopStatus !== 'paused') {
+          instance.completedAt = Date.now()
+        }
+        break
+      }
+
+      // 取下一个节点
+      const nextNodes = getNextNodes(sop, currentNodeId, nextCondition)
+      if (nextNodes.length === 0) {
+        // 无后续节点，自动完成
+        instance.status = 'completed'
+        instance.completedAt = Date.now()
+        await db.sopInstance.update({
+          where: { id: instanceId },
+          data: { status: 'completed', completedAt: new Date(), currentNodeId: null },
+        })
+        break
+      }
+      currentNodeId = nextNodes[0].id
     }
-    currentNodeId = nextNodes[0].id
-  }
 
-  if (safetyCounter >= MAX_NODES) {
-    instance.status = 'failed'
-    await db.sopInstance.update({
-      where: { id: instanceId },
-      data: { status: 'failed' },
-    })
-  }
+    if (safetyCounter >= MAX_NODES) {
+      instance.status = 'failed'
+      await db.sopInstance.update({
+        where: { id: instanceId },
+        data: { status: 'failed' },
+      })
+    }
 
-  return instance
+    return instance
+  } finally {
+    // 确保互斥锁一定释放，即使抛错也不会死锁
+    runningInstances.delete(instanceId)
+  }
 }
 
 // ─── 控制：暂停/恢复/终止 ─────────────────────────────────────────────

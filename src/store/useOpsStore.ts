@@ -317,7 +317,8 @@ export interface LogLine {
 
 export interface SystemEvent {
   type: string
-  payload: any
+  // payload 类型根据 type 而定，统一用 record 兜底；handler 内部需 narrow
+  payload: Record<string, unknown> | null
   traceId?: string
   level: string
   ts: number
@@ -554,6 +555,8 @@ interface OpsState {
   setModelCookie: (model: string, cookie: string) => void
   removeModelCookie: (model: string) => void
   setBrainOpen: (open: boolean) => void
+  /** 从 localStorage 恢复 modelCookies（启动时调用一次） */
+  hydrateModelCookies: () => void
 
   // 真实微信接入 (ClawBot)
   wechatReal: {
@@ -586,7 +589,7 @@ interface OpsState {
     sentCount: number
     failCount: number
   }
-  setDormantActivation: (partial: any) => void
+  setDormantActivation: (partial: Partial<OpsState['dormantActivation']>) => void
   sendDormantActivation: () => Promise<void>
 
   // 高播放量视频优先排序
@@ -689,6 +692,8 @@ interface OpsState {
   // 6大模块 actions
   setCircuitState: (state: OpsState['llmCircuitState']) => void
   triggerFallback: () => void
+  /** LLM 调用成功后重置熔断器失败计数（半开 → 闭合） */
+  recordLlmSuccess: () => void
   setActiveChannel: (ch: OpsState['activeChannel']) => void
   addHandoff: (leadId: string, leadName: string, reason: string) => void
   resolveHandoff: (leadId: string) => void
@@ -710,7 +715,7 @@ interface OpsState {
   toggleVideoIntercept: () => void
   scanVideoComments: () => void  // 扫描评论区
   sendInterceptDM: (targetId: string) => Promise<void>  // 发私信
-  generateDMMessage: (target: any) => string  // 生成私信内容
+  generateDMMessage: (target: OpsState['videoIntercept']['targets'][number]) => string  // 生成私信内容
 
   // 人设编辑器
   openPersonaEditor: (personaId: string | null) => void
@@ -808,9 +813,28 @@ interface OpsState {
 // ─── Socket singleton ─────────────────────────────────────────
 let socket: Socket | null = null
 
+// ─── Module-level timer handles (避免泄漏到 window，且 HMR 安全) ────
+// 之前压测定时器挂在 window.__stressTimer 上，HMR 时旧定时器无法被新代码取消。
+let stressTimer: ReturnType<typeof setInterval> | null = null
+// 熔断器 30s 半开定时器（用于在 reset / killSwitch 时主动取消）
+let circuitRecoverTimer: ReturnType<typeof setTimeout> | null = null
+// 防双端打架横幅 5s 自动清除定时器
+let takeoverWarningTimer: ReturnType<typeof setTimeout> | null = null
+// 幽灵卡片 5s 自动消散定时器
+let ghostCardTimer: ReturnType<typeof setTimeout> | null = null
+// EventBus ready 状态恢复定时器
+let readyStatusTimer: ReturnType<typeof setTimeout> | null = null
+// Socket 连接超时定时器（5s 离线降级）
+let connectTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+// 视频号截流扫描延迟定时器
+let scanVideoTimer: ReturnType<typeof setTimeout> | null = null
+
 // ─── Helpers ─────────────────────────────────────────────────
 let notifIdCounter = 0
 const nextNotifId = () => `n_${Date.now()}_${notifIdCounter++}`
+
+// 日志上限（与各处 .slice(0, 500) 保持一致）
+const LOG_CAP = 500
 
 const DEFAULT_SETTINGS: Settings = {
   agingRate: 2,
@@ -2147,78 +2171,107 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     }
 
     // 5秒后如果还没连上，标记为离线（但保留种子数据让 UI 可用）
-    const connectTimeout = setTimeout(() => {
+    // 注意：用模块级 connectTimeoutHandle 以便 disconnect 时主动取消
+    if (connectTimeoutHandle) clearTimeout(connectTimeoutHandle)
+    connectTimeoutHandle = setTimeout(() => {
       if (get().connection === 'connecting') {
-        set({ connection: 'disconnected' })
-        get().logs.unshift({
-          level: 'warn',
-          msg: `[SYSTEM] 实时流未连接，当前显示种子数据（离线模式）。点击压测/回复仍可正常工作。`,
-          ts: Date.now(),
+        set({
+          connection: 'disconnected',
+          logs: [{
+            level: 'warn' as const,
+            msg: `[SYSTEM] 实时流未连接，当前显示种子数据（离线模式）。点击压测/回复仍可正常工作。`,
+            ts: Date.now(),
+          }, ...get().logs].slice(0, LOG_CAP),
         })
-        set({ logs: [...get().logs] })
       }
+      connectTimeoutHandle = null
     }, 5000)
 
     socket.on('connect', () => {
-      clearTimeout(connectTimeout)
-      set({ connection: 'connected' })
-      get().logs.unshift({
-        level: 'system',
-        msg: `[SYSTEM] Connected to WAOS Realtime Stream (sid=${socket?.id?.slice(0, 8)})`,
-        ts: Date.now(),
+      if (connectTimeoutHandle) {
+        clearTimeout(connectTimeoutHandle)
+        connectTimeoutHandle = null
+      }
+      set({
+        connection: 'connected',
+        logs: [{
+          level: 'system' as const,
+          msg: `[SYSTEM] Connected to WAOS Realtime Stream (sid=${socket?.id?.slice(0, 8)})`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
       })
-      set({ logs: [...get().logs] })
     })
 
     socket.on('disconnect', () => {
-      set({ connection: 'disconnected' })
-      get().logs.unshift({
-        level: 'critical',
-        msg: `[SYSTEM] Disconnected from stream. Reconnecting...`,
-        ts: Date.now(),
+      set({
+        connection: 'disconnected',
+        logs: [{
+          level: 'critical' as const,
+          msg: `[SYSTEM] Disconnected from stream. Reconnecting...`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
       })
-      set({ logs: [...get().logs] })
     })
 
-    socket.on('snapshot', (data: any) => {
-      const leads: Lead[] = data.leads || []
-      set({
-        leads,
-        queues: data.queues || get().queues,
-        metrics: { ...get().metrics, ...data.metrics },
-        selectedLeadId: leads[0]?.id ?? null,
-        cursor: 0,
-        clientViewLeadId: leads[0]?.id ?? null,
-      })
-      get().logs.unshift({
-        level: 'system',
-        msg: `[SNAPSHOT] loaded ${leads.length} leads`,
-        ts: Date.now(),
-      })
-      set({ logs: [...get().logs] })
-      // 初始化朋友圈 + AI 推荐
-      get().refreshMoments()
-      if (leads[0]) {
-        setTimeout(() => {
-          get().generateReplySuggestions()
-          get().updateCustomerInsight()
-        }, 100)
+    socket.on('snapshot', (data: unknown) => {
+      // 防御性解析：服务端可能发送异常 payload，不能让整个 store 崩溃
+      try {
+        if (!data || typeof data !== 'object') return
+        const d = data as { leads?: unknown; queues?: unknown; metrics?: unknown }
+        const leads = Array.isArray(d.leads) ? (d.leads as Lead[]) : []
+        set({
+          leads,
+          queues: (d.queues as Queues) || get().queues,
+          metrics: { ...get().metrics, ...((d.metrics as Partial<Metrics>) || {}) },
+          selectedLeadId: leads[0]?.id ?? null,
+          cursor: 0,
+          clientViewLeadId: leads[0]?.id ?? null,
+        })
+        set({
+          logs: [{
+            level: 'system' as const,
+            msg: `[SNAPSHOT] loaded ${leads.length} leads`,
+            ts: Date.now(),
+          }, ...get().logs].slice(0, LOG_CAP),
+        })
+        // 初始化朋友圈 + AI 推荐
+        get().refreshMoments()
+        if (leads[0]) {
+          setTimeout(() => {
+            get().generateReplySuggestions()
+            get().updateCustomerInsight()
+          }, 100)
+        }
+      } catch (err) {
+        // snapshot 解析失败时降级：保留现有 leads，记一条错误日志
+        set({
+          logs: [{
+            level: 'error' as const,
+            msg: `[SNAPSHOT] 解析失败: ${err instanceof Error ? err.message : String(err)}`,
+            ts: Date.now(),
+          }, ...get().logs].slice(0, LOG_CAP),
+        })
       }
     })
 
     socket.on('event', (event: SystemEvent) => {
+      // 防御：event 可能被中间件篡改成非法结构
+      if (!event || typeof event.type !== 'string') return
       const events = [event, ...get().events].slice(0, 200)
       set({ events })
 
       const { type, payload } = event
       const settings = get().settings
+      // payload 可能为 null（如 dispatch.execute），各分支需自行 narrow
+      const p = (payload || {}) as Record<string, any>
 
       // ─── Push notifications + audit entries based on event type ───
       let newNotif: NotificationItem | null = null
       let audit: AuditEntry | null = null
 
       if (type === 'lead.created') {
-        const lead = payload as Lead
+        if (!p || typeof p !== 'object') return
+        const lead = p as Lead
         const { focusMode, leads, selectedLeadId } = get()
         if (leads.find(l => l.id === lead.id)) return
         const newLeads = [lead, ...leads]
@@ -2250,7 +2303,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         } else {
           newNotif = {
             id: nextNotifId(),
-            level: 'info',
+            level: 'info' as const,
             title: '📥 新线索接入',
             message: `${lead.userName} via ${lead.source} · ${lead.stage} · P${lead.priorityScore.toFixed(0)}`,
             leadId: lead.id,
@@ -2269,7 +2322,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
           set({ selectedLeadId: lead.id, cursor: 0 })
         }
       } else if (type === 'state.transition') {
-        const { leadId, from, to, action, lead } = payload
+        const { leadId, from, to, action, lead } = p as { leadId: string; from: string; to: Stage; action: string; lead?: Lead }
         set({
           leads: get().leads.map(l =>
             l.id === leadId ? { ...(lead || l), stage: to, unread: true } : l
@@ -2291,7 +2344,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         if (to === 'converted') {
           newNotif = {
             id: nextNotifId(),
-            level: 'info',
+            level: 'info' as const,
             title: '✅ 线索已成交',
             message: `${leadName} · ${from} → ${to}`,
             leadId, leadName, traceId: event.traceId, ts: event.ts, read: false,
@@ -2307,7 +2360,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         } else if (to === 'churned') {
           newNotif = {
             id: nextNotifId(),
-            level: 'warn',
+            level: 'warn' as const,
             title: '❄️ 线索流失',
             message: `${leadName} · ${from} → ${to}`,
             leadId, leadName, traceId: event.traceId, ts: event.ts, read: false,
@@ -2316,7 +2369,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
           // Info-level for intermediate transitions
           newNotif = {
             id: nextNotifId(),
-            level: 'info',
+            level: 'info' as const,
             title: to === 'engaged' ? '💬 启动互动' : '📋 资质认证',
             message: `${leadName} · ${from} → ${to}`,
             leadId, leadName, traceId: event.traceId, ts: event.ts, read: false,
@@ -2328,7 +2381,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
           set({ selectedLeadId: leadId, cursor: 0 })
         }
       } else if (type === 'llm.call') {
-        const { leadId, msg, lead } = payload
+        const { leadId, msg, lead } = p as { leadId: string; msg: LeadMessage; lead?: Lead }
         set({
           leads: get().leads.map(l =>
             l.id === leadId
@@ -2352,29 +2405,31 @@ export const useOpsStore = create<OpsState>((set, get) => ({
           ts: event.ts,
         }
       } else if (type === 'safety.block') {
+        const sbLeadId = (p.leadId as string) || ''
+        const sbReason = (p.reason as string) || '未知原因'
         if (settings.notifyOnSafety) {
-          const lead = get().leads.find(l => l.id === payload.leadId)
+          const lead = get().leads.find(l => l.id === sbLeadId)
           newNotif = {
             id: nextNotifId(),
-            level: 'warn',
+            level: 'warn' as const,
             title: '🛡️ SafetyShield 拦截',
-            message: `AI 输出被拦截 · ${payload.reason}`,
-            leadId: payload.leadId,
+            message: `AI 输出被拦截 · ${sbReason}`,
+            leadId: sbLeadId,
             leadName: lead?.userName,
             traceId: event.traceId, ts: event.ts, read: false,
           }
         }
         audit = {
           id: nextNotifId(),
-          leadId: payload.leadId,
+          leadId: sbLeadId,
           actor: 'system',
           action: 'safety.block',
-          reason: payload.reason,
+          reason: sbReason,
           traceId: event.traceId,
           ts: event.ts,
         }
       } else if (type === 'human.handoff') {
-        const { leadId, lead, reason } = payload
+        const { leadId, lead, reason } = p as { leadId: string; lead?: Lead; reason: string }
         set({
           leads: get().leads.map(l =>
             l.id === leadId ? { ...(lead || l), stage: 'blocked' as Stage, unread: true } : l
@@ -2384,7 +2439,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
           const leadName = lead?.userName || '未知'
           newNotif = {
             id: nextNotifId(),
-            level: 'critical',
+            level: 'critical' as const,
             title: '🤝 转人工接管',
             message: `${leadName} · 原因: ${reason}`,
             leadId, leadName, traceId: event.traceId, ts: event.ts, read: false,
@@ -2415,16 +2470,18 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     })
 
     socket.on('log', (line: LogLine) => {
-      const logs = [line, ...get().logs].slice(0, 500)
+      if (!line || typeof line.msg !== 'string') return
+      const logs = [line, ...get().logs].slice(0, LOG_CAP)
       set({ logs })
     })
 
     socket.on('queues', (q: Queues) => {
+      if (!q || typeof q !== 'object') return
       set({ queues: q })
     })
 
     socket.on('metrics', (m: Metrics) => {
-      const prev = get().metrics
+      if (!m || typeof m !== 'object') return
       set({ metrics: m })
       // Append to history (max 60 points = ~5 min at 5s interval)
       const point: MetricsHistoryPoint = {
@@ -2444,16 +2501,22 @@ export const useOpsStore = create<OpsState>((set, get) => ({
 
     // When operator sends a client action, also log to audit + notification
     socket.io.on('reconnect', () => {
-      get().logs.unshift({
-        level: 'system',
-        msg: `[SYSTEM] Reconnected to stream`,
-        ts: Date.now(),
+      set({
+        logs: [{
+          level: 'system' as const,
+          msg: `[SYSTEM] Reconnected to stream`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
       })
-      set({ logs: [...get().logs] })
     })
   },
 
   disconnect: () => {
+    // 清理所有挂载在 socket 上的定时器，避免 disconnect 后定时器仍触发
+    if (connectTimeoutHandle) {
+      clearTimeout(connectTimeoutHandle)
+      connectTimeoutHandle = null
+    }
     socket?.disconnect()
     socket = null
   },
@@ -2479,7 +2542,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       get().updatePredictions()
       get().loadCustomerMemory(id)
     })
-    set({ _selectLeadRaf: raf } as any)
+    set({ _selectLeadRaf: raf })
   },
 
   moveCursor: (dir) => {
@@ -2497,13 +2560,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   },
 
   setFocusMode: (mode) => {
-    set({ focusMode: mode })
-    get().logs.unshift({
-      level: 'system',
-      msg: `[FOCUS] mode → ${mode}`,
-      ts: Date.now(),
+    set({
+      focusMode: mode,
+      logs: [{
+        level: 'system' as const,
+        msg: `[FOCUS] mode → ${mode}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
     })
-    set({ logs: [...get().logs] })
   },
 
   markRead: (id) => {
@@ -2759,7 +2823,17 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     eventBus.emitStatusUpdate('typing')
     eventBus.emitUpdateLeads()
     // 短暂延迟后切回 ready，让 UI 状态机完成 typing → ready 过渡
-    setTimeout(() => getEventBus().emitStatusUpdate('ready'), 800)
+    // 用模块级句柄存储，组件卸载/再次发送时主动取消旧定时器
+    if (readyStatusTimer) clearTimeout(readyStatusTimer)
+    readyStatusTimer = setTimeout(() => {
+      try {
+        getEventBus().emitStatusUpdate('ready')
+      } finally {
+        readyStatusTimer = null
+      }
+    }, 800)
+    // AI 回复成功 → 重置熔断器失败计数（半开/闭合状态都重置）
+    get().recordLlmSuccess()
 
     // 5. Emit client action + add audit
     get().sendClientAction('manual_reply', lead.id)
@@ -2809,16 +2883,25 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       },
     })
     // 5 秒后自动清除（仅当当前横幅仍是本次触发时才清除）
-    setTimeout(() => {
+    // 用模块级句柄，便于 clearTakeoverWarning 主动取消
+    if (takeoverWarningTimer) clearTimeout(takeoverWarningTimer)
+    takeoverWarningTimer = setTimeout(() => {
       const cur = get().takeoverWarning
       if (cur && cur.triggeredAt === triggeredAt) {
         set({ takeoverWarning: null })
       }
+      takeoverWarningTimer = null
     }, 5000)
   },
 
   // 立即清除横幅（手动关闭按钮使用）
-  clearTakeoverWarning: () => set({ takeoverWarning: null }),
+  clearTakeoverWarning: () => {
+    if (takeoverWarningTimer) {
+      clearTimeout(takeoverWarningTimer)
+      takeoverWarningTimer = null
+    }
+    set({ takeoverWarning: null })
+  },
 
   setFunctionPanel: (panel) => set({ functionPanel: panel }),
 
@@ -2840,22 +2923,44 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       llmFallbackCount: get().llmFallbackCount + 1,
       llmCircuitState: failures >= 3 ? 'open' : 'closed',
     })
-    // 30秒后自动半开
+    // 30秒后自动半开（用模块级句柄，便于主动取消；多次触发 fallback 时只保留最新一个定时器）
     if (failures >= 3) {
-      setTimeout(() => set({ llmCircuitState: 'half-open' }), 30000)
+      if (circuitRecoverTimer) clearTimeout(circuitRecoverTimer)
+      circuitRecoverTimer = setTimeout(() => {
+        set({ llmCircuitState: 'half-open' })
+        circuitRecoverTimer = null
+      }, 30000)
     }
+  },
+
+  // LLM 调用成功 → 重置失败计数；半开/闭合都视为已恢复
+  recordLlmSuccess: () => {
+    const cur = get().llmConsecutiveFailures
+    if (cur === 0 && get().llmCircuitState === 'closed') return  // 已是稳态，无需写
+    if (circuitRecoverTimer) {
+      clearTimeout(circuitRecoverTimer)
+      circuitRecoverTimer = null
+    }
+    set({
+      llmConsecutiveFailures: 0,
+      llmCircuitState: 'closed',
+    })
   },
 
   setActiveChannel: (ch) => set({ activeChannel: ch }),
 
   // 多微信号切换
   switchWechatAccount: (id) => {
+    const targetName = get().wechatAccounts.find(a => a.id === id)?.name
     set({
       activeWechatId: id,
       wechatAccounts: get().wechatAccounts.map(a => ({ ...a, active: a.id === id })),
+      logs: [{
+        level: 'system' as const,
+        msg: `[微信] 切换到: ${targetName ?? id}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
     })
-    get().logs.unshift({ level: 'system' as const, msg: `[微信] 切换到: ${get().wechatAccounts.find(a => a.id === id)?.name}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
   },
 
   // 沉睡客户激活
@@ -2868,31 +2973,44 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     set({ dormantActivation: { ...dormantActivation, sending: true, sentCount: 0, failCount: 0 } })
     const targets = leads.filter(l => dormantActivation.selectedIds.includes(l.id))
 
-    for (let i = 0; i < targets.length; i++) {
-      const lead = targets[i]
-      try {
-        // 调用自动回复 API 发送激活消息
-        await fetch('/api/waos/auto-reply', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'wechat_dm_reply',
-            targetId: lead.externalId,
-            content: dormantActivation.template,
-            config: { skipDelay: false },  // 不跳过防封延迟
-          }),
-        })
-        set({ dormantActivation: { ...get().dormantActivation, sentCount: get().dormantActivation.sentCount + 1 } })
-      } catch {
-        set({ dormantActivation: { ...get().dormantActivation, failCount: get().dormantActivation.failCount + 1 } })
+    // 用 try/finally 保证 sending 状态在任何情况下都会被重置
+    // （之前若 for 循环中 await 抛出未捕获异常，sending 会永远卡在 true）
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const lead = targets[i]
+        // 提前读取当前模板（用户可能在循环中改模板，应使用开始时的版本）
+        const template = dormantActivation.template
+        try {
+          // 调用自动回复 API 发送激活消息
+          const res = await fetch('/api/waos/auto-reply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'wechat_dm_reply',
+              targetId: lead.externalId,
+              content: template,
+              config: { skipDelay: false },  // 不跳过防封延迟
+            }),
+          })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          set({ dormantActivation: { ...get().dormantActivation, sentCount: get().dormantActivation.sentCount + 1 } })
+        } catch {
+          set({ dormantActivation: { ...get().dormantActivation, failCount: get().dormantActivation.failCount + 1 } })
+        }
+        // 防封间隔 3-8 秒
+        await new Promise(r => setTimeout(r, 3000 + Math.random() * 5000))
       }
-      // 防封间隔 3-8 秒
-      await new Promise(r => setTimeout(r, 3000 + Math.random() * 5000))
+    } finally {
+      const final = get().dormantActivation
+      set({
+        dormantActivation: { ...final, sending: false },
+        logs: [{
+          level: 'info' as const,
+          msg: `[群发] 沉睡激活完成: ${final.sentCount}成功 ${final.failCount}失败`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
     }
-
-    set({ dormantActivation: { ...get().dormantActivation, sending: false } })
-    get().logs.unshift({ level: 'info' as const, msg: `[群发] 沉睡激活完成: ${get().dormantActivation.sentCount}成功 ${get().dormantActivation.failCount}失败`, ts: Date.now() })
-    set({ logs: [...get().logs] })
   },
 
   // 高播放量优先排序
@@ -2921,37 +3039,47 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     // 客诉强制拦截: 状态切churned + 人工接管 + 最高优先级
     get().addHandoff(leadId, leadName, '客诉高危关键词触发')
     get().sendClientAction('human_handoff', leadId)
-    get().logs.unshift({
-      level: 'critical' as const,
-      msg: `[COMPLAINT] ${leadName} 触发客诉拦截 → 强制人工接管 (P100)`,
-      ts: Date.now(),
+    set({
+      logs: [{
+        level: 'critical' as const,
+        msg: `[COMPLAINT] ${leadName} 触发客诉拦截 → 强制人工接管 (P100)`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
     })
-    set({ logs: [...get().logs] })
   },
 
   // ─── P0 新增 actions ────────────────────────────────────────
   toggleKillSwitch: () => {
     const active = !get().killSwitchActive
-    set({ killSwitchActive: active })
-    get().logs.unshift({
-      level: active ? 'critical' as const : 'system' as const,
-      msg: active ? `[KILL SWITCH] 🔴 全局熔断已激活 — 所有自动化已停止` : `[KILL SWITCH] 🟢 全局熔断已解除 — 自动化恢复`,
-      ts: Date.now(),
+    set({
+      killSwitchActive: active,
+      logs: [{
+        level: active ? 'critical' as const : 'system' as const,
+        msg: active ? `[KILL SWITCH] 🔴 全局熔断已激活 — 所有自动化已停止` : `[KILL SWITCH] 🟢 全局熔断已解除 — 自动化恢复`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
     })
-    set({ logs: [...get().logs] })
   },
 
   showGhostCard: (content, strategy, confidence) => {
     set({ ghostCard: { content, strategy, confidence } })
-    // 5秒自动消散
-    setTimeout(() => {
+    // 5秒自动消散（用模块级句柄，便于 dismissGhostCard 主动取消）
+    if (ghostCardTimer) clearTimeout(ghostCardTimer)
+    ghostCardTimer = setTimeout(() => {
       if (get().ghostCard?.content === content) {
         set({ ghostCard: null })
       }
+      ghostCardTimer = null
     }, 5000)
   },
 
-  dismissGhostCard: () => set({ ghostCard: null }),
+  dismissGhostCard: () => {
+    if (ghostCardTimer) {
+      clearTimeout(ghostCardTimer)
+      ghostCardTimer = null
+    }
+    set({ ghostCard: null })
+  },
 
   updateSalesCopilot: () => {
     const lead = get().leads.find(l => l.id === get().clientViewLeadId)
@@ -3024,41 +3152,45 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   addCommentToQueue: (platform, userName, content) => {
     const id = `comment_${Date.now()}`
     set({
-      commentQueue: [{ id, platform, userName, content, status: 'pending' as const }, ...get().commentQueue].slice(0, 50)
+      commentQueue: [{ id, platform, userName, content, status: 'pending' as const }, ...get().commentQueue].slice(0, 50),
+      logs: [{
+        level: 'info' as const,
+        msg: `[COMMENT] ${platform} 评论来自 ${userName}: ${content.slice(0, 30)}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
     })
-    get().logs.unshift({
-      level: 'info' as const,
-      msg: `[COMMENT] ${platform} 评论来自 ${userName}: ${content.slice(0, 30)}`,
-      ts: Date.now(),
-    })
-    set({ logs: [...get().logs] })
   },
 
   replyComment: (commentId, reply) => {
     set({
-      commentQueue: get().commentQueue.map(c => c.id === commentId ? { ...c, aiReply: reply, status: 'replied' as const } : c)
+      commentQueue: get().commentQueue.map(c => c.id === commentId ? { ...c, aiReply: reply, status: 'replied' as const } : c),
+      logs: [{
+        level: 'info' as const,
+        msg: `[COMMENT REPLY] 已回复评论 ${commentId.slice(0, 16)}: ${reply.slice(0, 30)}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
     })
-    get().logs.unshift({
-      level: 'info' as const,
-      msg: `[COMMENT REPLY] 已回复评论 ${commentId.slice(0, 16)}: ${reply.slice(0, 30)}`,
-      ts: Date.now(),
-    })
-    set({ logs: [...get().logs] })
   },
 
   // ─── 视频号截流引擎 ────────────────────────────────────────
   toggleVideoIntercept: () => {
     const enabled = !get().videoIntercept.enabled
-    set({ videoIntercept: { ...get().videoIntercept, enabled } })
-    get().logs.unshift({
-      level: enabled ? 'info' as const : 'warn' as const,
-      msg: enabled ? `[INTERCEPT] 🔍 视频号截流已启动 — 监控: "${get().videoIntercept.monitoringVideo}"` : `[INTERCEPT] 视频号截流已停止`,
-      ts: Date.now(),
+    const monitoringVideo = get().videoIntercept.monitoringVideo
+    set({
+      videoIntercept: { ...get().videoIntercept, enabled },
+      logs: [{
+        level: enabled ? 'info' as const : 'warn' as const,
+        msg: enabled ? `[INTERCEPT] 🔍 视频号截流已启动 — 监控: "${monitoringVideo}"` : `[INTERCEPT] 视频号截流已停止`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
     })
-    set({ logs: [...get().logs] })
     if (enabled) {
-      // 启动后立即扫描一次
-      setTimeout(() => get().scanVideoComments(), 500)
+      // 启动后立即扫描一次（用模块级句柄避免重复挂载）
+      if (scanVideoTimer) clearTimeout(scanVideoTimer)
+      scanVideoTimer = setTimeout(() => {
+        scanVideoTimer = null
+        get().scanVideoComments()
+      }, 500)
     }
   },
 
@@ -3078,25 +3210,23 @@ export const useOpsStore = create<OpsState>((set, get) => ({
 
     const highIntentCount = sortedTargets.filter(t => t.intentScore >= 70).length
 
+    // 找出最高播放量的视频
+    const topVideo = sortedTargets[0]
+    const topPlayCount = topVideo?.videoPlayCount || 0
+
     set({
       videoIntercept: {
         ...vi,
         targets: sortedTargets,
         commentsDetected: vi.targets.length + Math.floor(Math.random() * 20 + 10),
         highIntentFound: highIntentCount,
-      }
+      },
+      logs: [{
+        level: 'info' as const,
+        msg: `[截流] 扫描完成: ${vi.targets.length}条评论, ${highIntentCount}个高意向 · 优先处理播放量${topPlayCount > 100000 ? '10w+' : topPlayCount}的视频`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
     })
-
-    // 找出最高播放量的视频
-    const topVideo = sortedTargets[0]
-    const topPlayCount = topVideo?.videoPlayCount || 0
-
-    get().logs.unshift({
-      level: 'info' as const,
-      msg: `[截流] 扫描完成: ${vi.targets.length}条评论, ${highIntentCount}个高意向 · 优先处理播放量${topPlayCount > 100000 ? '10w+' : topPlayCount}的视频`,
-      ts: Date.now(),
-    })
-    set({ logs: [...get().logs] })
   },
 
   generateDMMessage: (target) => {
@@ -3154,15 +3284,13 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         ...vi,
         dmSent: vi.dmSent + 1,
         targets: vi.targets.map(t => t.id === targetId ? { ...t, dmMessage, dmStatus: 'sent' as const } : t),
-      }
+      },
+      logs: [{
+        level: 'info' as const,
+        msg: `[INTERCEPT] ✅ 已私信 ${target.userName} (意向${target.intentScore}分): "${dmMessage.slice(0, 30)}..."`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
     })
-
-    get().logs.unshift({
-      level: 'info' as const,
-      msg: `[INTERCEPT] ✅ 已私信 ${target.userName} (意向${target.intentScore}分): "${dmMessage.slice(0, 30)}..."`,
-      ts: Date.now(),
-    })
-    set({ logs: [...get().logs] })
   },
 
   // ─── 人设编辑器 actions ─────────────────────────────────────
@@ -3186,15 +3314,25 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         body: JSON.stringify({ action: 'login' }),
       })
       const data = await res.json()
-      set({ wechatReal: { ...get().wechatReal, loggedIn: data.success, loginLoading: false } })
-      if (data.success) {
-        get().logs.unshift({ level: 'info' as const, msg: `[微信] ClawBot 登录成功，请在终端扫码`, ts: Date.now() })
-      } else {
-        get().logs.unshift({ level: 'error' as const, msg: `[微信] 登录失败: ${data.error || ''}`, ts: Date.now() })
-      }
-      set({ logs: [...get().logs] })
+      const success = !!data?.success
+      set({
+        wechatReal: { ...get().wechatReal, loggedIn: success, loginLoading: false },
+        logs: [{
+          level: success ? 'info' as const : 'error' as const,
+          msg: success ? `[微信] ClawBot 登录成功，请在终端扫码` : `[微信] 登录失败: ${data?.error || '未知错误'}`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
     } catch (e) {
-      set({ wechatReal: { ...get().wechatReal, loginLoading: false } })
+      // 之前错误被静默吞掉，现在补上错误日志
+      set({
+        wechatReal: { ...get().wechatReal, loginLoading: false },
+        logs: [{
+          level: 'error' as const,
+          msg: `[微信] 登录请求异常: ${e instanceof Error ? e.message : String(e)}`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
     }
   },
 
@@ -3206,10 +3344,15 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         body: JSON.stringify({ action: 'start' }),
       })
       const data = await res.json()
-      if (data.success) {
-        set({ wechatReal: { ...get().wechatReal, running: true } })
-        get().logs.unshift({ level: 'info' as const, msg: `[微信] 自动回复已启动 — AI 大脑接管`, ts: Date.now() })
-        set({ logs: [...get().logs] })
+      if (data?.success) {
+        set({
+          wechatReal: { ...get().wechatReal, running: true },
+          logs: [{
+            level: 'info' as const,
+            msg: `[微信] 自动回复已启动 — AI 大脑接管`,
+            ts: Date.now(),
+          }, ...get().logs].slice(0, LOG_CAP),
+        })
       }
     } catch {}
   },
@@ -3221,9 +3364,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'stop' }),
       })
-      set({ wechatReal: { ...get().wechatReal, running: false } })
-      get().logs.unshift({ level: 'warn' as const, msg: `[微信] 自动回复已停止`, ts: Date.now() })
-      set({ logs: [...get().logs] })
+      set({
+        wechatReal: { ...get().wechatReal, running: false },
+        logs: [{
+          level: 'warn' as const,
+          msg: `[微信] 自动回复已停止`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
     } catch {}
   },
 
@@ -3235,9 +3383,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         body: JSON.stringify({ action: 'broadcast', message }),
       })
       const data = await res.json()
-      if (data.success) {
-        get().logs.unshift({ level: 'info' as const, msg: `[微信] 群发成功: ${message.slice(0, 30)}`, ts: Date.now() })
-        set({ logs: [...get().logs] })
+      if (data?.success) {
+        set({
+          logs: [{
+            level: 'info' as const,
+            msg: `[微信] 群发成功: ${message.slice(0, 30)}`,
+            ts: Date.now(),
+          }, ...get().logs].slice(0, LOG_CAP),
+        })
       }
     } catch {}
   },
@@ -3259,47 +3412,101 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   },
   setModelCookie: (model, cookie) => {
     const modelCookies = { ...get().modelCookies, [model]: cookie }
-    set({ modelCookies })
+    set({
+      modelCookies,
+      logs: [{
+        level: 'info' as const,
+        msg: `[BRAIN] ${model} Cookie 已保存 (${cookie.length}字符)`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     if (typeof window !== 'undefined') {
-      localStorage.setItem('waos:modelCookies', JSON.stringify(modelCookies))
+      try {
+        localStorage.setItem('waos:modelCookies', JSON.stringify(modelCookies))
+      } catch (e) {
+        // localStorage 可能被隐私模式 / 配额耗尽拒绢
+        console.warn('[BRAIN] persist modelCookies 失败:', e)
+      }
     }
-    get().logs.unshift({ level: 'info' as const, msg: `[BRAIN] ${model} Cookie 已保存 (${cookie.length}字符)`, ts: Date.now() })
-    set({ logs: [...get().logs] })
   },
   removeModelCookie: (model) => {
     const modelCookies = { ...get().modelCookies }
     delete modelCookies[model]
-    set({ modelCookies })
+    set({
+      modelCookies,
+      logs: [{
+        level: 'warn' as const,
+        msg: `[BRAIN] ${model} Cookie 已清除`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     if (typeof window !== 'undefined') {
-      localStorage.setItem('waos:modelCookies', JSON.stringify(modelCookies))
+      try {
+        localStorage.setItem('waos:modelCookies', JSON.stringify(modelCookies))
+      } catch (e) {
+        console.warn('[BRAIN] persist modelCookies 失败:', e)
+      }
     }
-    get().logs.unshift({ level: 'warn' as const, msg: `[BRAIN] ${model} Cookie 已清除`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+  },
+
+  // 启动时从 localStorage 恢复 modelCookies（之前只 persist 不 hydrate，导致刷新后丢失）
+  hydrateModelCookies: () => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = localStorage.getItem('waos:modelCookies')
+      if (!raw) return
+      const stored = JSON.parse(raw) as Record<string, string>
+      if (stored && typeof stored === 'object') {
+        set({ modelCookies: stored })
+      }
+    } catch (e) {
+      console.warn('[BRAIN] hydrate modelCookies 失败:', e)
+    }
   },
 
   savePersona: (persona) => {
-    set({ personas: get().personas.map(p => p.id === persona.id ? persona : p) })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 已保存人设: ${persona.name}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas: get().personas.map(p => p.id === persona.id ? persona : p),
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] 已保存人设: ${persona.name}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
   },
 
   addPersona: (persona) => {
-    set({ personas: [...get().personas, persona] })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 新建人设: ${persona.name}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas: [...get().personas, persona],
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] 新建人设: ${persona.name}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
   },
 
   deletePersona: (personaId) => {
-    set({ personas: get().personas.filter(p => p.id !== personaId) })
-    get().logs.unshift({ level: 'warn' as const, msg: `[PERSONA] 已删除人设: ${personaId}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas: get().personas.filter(p => p.id !== personaId),
+      logs: [{
+        level: 'warn' as const,
+        msg: `[PERSONA] 已删除人设: ${personaId}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
   },
 
   autoOptimizePersona: async (personaId) => {
     const persona = get().personas.find(p => p.id === personaId)
     if (!persona) return
-    get().logs.unshift({ level: 'info' as const, msg: `[AI OPTIMIZE] 开始自动校准人设: ${persona.name}...`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      logs: [{
+        level: 'info' as const,
+        msg: `[AI OPTIMIZE] 开始自动校准人设: ${persona.name}...`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
 
     await new Promise(r => setTimeout(r, 1500))
 
@@ -3314,9 +3521,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       },
       optimizationScore: persona.optimizationScore + (Math.random() - 0.3) * 2,
     }
-    set({ personas: get().personas.map(p => p.id === personaId ? optimized : p) })
-    get().logs.unshift({ level: 'info' as const, msg: `[AI OPTIMIZE] ✅ 人设校准完成: ${persona.name} (warmth${delta > 0 ? '+' : ''}${delta}, pressure${persona.personality.pressure > 70 ? '-' : '+'}${Math.abs(delta)})`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas: get().personas.map(p => p.id === personaId ? optimized : p),
+      logs: [{
+        level: 'info' as const,
+        msg: `[AI OPTIMIZE] ✅ 人设校准完成: ${persona.name} (warmth${delta > 0 ? '+' : ''}${delta}, pressure${persona.personality.pressure > 70 ? '-' : '+'}${Math.abs(delta)})`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
   },
 
   // ─── 人设系统深度重构：业务/联系/技能/SOP/风格 CRUD ──────────────
@@ -3326,9 +3538,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     const personas = get().personas.map(p =>
       p.id === id ? { ...p, business: { ...p.business, ...business } } : p
     )
-    set({ personas })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 业务配置更新: ${personas.find(p => p.id === id)?.name} (carModels=${business.carModels?.length ?? 'n/a'})`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas,
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] 业务配置更新: ${personas.find(p => p.id === id)?.name} (carModels=${business.carModels?.length ?? 'n/a'})`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     get().persistPersonas()
   },
 
@@ -3336,9 +3553,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     const personas = get().personas.map(p =>
       p.id === id ? { ...p, contact: { ...p.contact, ...contact } } : p
     )
-    set({ personas })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 联系方式更新: ${personas.find(p => p.id === id)?.name}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas,
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] 联系方式更新: ${personas.find(p => p.id === id)?.name}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     get().persistPersonas()
   },
 
@@ -3350,9 +3572,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         : [...p.skillConfig.enabledSkills, skillId]
       return { ...p, skillConfig: { ...p.skillConfig, enabledSkills: enabled } }
     })
-    set({ personas })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 技能切换: ${skillId} @ ${id}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas,
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] 技能切换: ${skillId} @ ${id}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     get().persistPersonas()
   },
 
@@ -3364,9 +3591,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         : [...p.skillConfig.enabledSops, sopId]
       return { ...p, skillConfig: { ...p.skillConfig, enabledSops: enabled } }
     })
-    set({ personas })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] SOP 切换: ${sopId} @ ${id}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas,
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] SOP 切换: ${sopId} @ ${id}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     get().persistPersonas()
   },
 
@@ -3377,9 +3609,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       const merged = Array.from(new Set([...p.skillConfig.enabledSops, ...p.skillConfig.recommendedSops]))
       return { ...p, skillConfig: { ...p.skillConfig, enabledSops: merged } }
     })
-    set({ personas })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] ✅ 已一键启用推荐 SOP: ${id}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas,
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] ✅ 已一键启用推荐 SOP: ${id}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     get().persistPersonas()
   },
 
@@ -3387,9 +3624,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     const personas = get().personas.map(p =>
       p.id === id ? { ...p, styleExtends: { ...p.styleExtends, ...style } } : p
     )
-    set({ personas })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 话术风格更新: ${personas.find(p => p.id === id)?.name}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas,
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] 话术风格更新: ${personas.find(p => p.id === id)?.name}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     get().persistPersonas()
   },
 
@@ -3438,9 +3680,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         frequentEmojis: [],
       },
     }
-    set({ personas: [...get().personas, newPersona] })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] ✨ 新建人设: ${newPersona.name} (${id})`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas: [...get().personas, newPersona],
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] ✨ 新建人设: ${newPersona.name} (${id})`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     get().persistPersonas()
     return id
   },
@@ -3450,15 +3697,25 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     const src = get().personas.find(p => p.id === id)
     if (!src) return
     const newId = `persona_${Date.now()}`
+    // 优先用 structuredClone（现代浏览器原生支持，比 JSON 快且保留更多类型）
+    // JSON.parse(JSON.stringify(...)) 作为兑底（老旧环境）
+    const cloneBase: Persona = (typeof structuredClone === 'function')
+      ? structuredClone(src)
+      : JSON.parse(JSON.stringify(src)) as Persona
     const copy: Persona = {
-      ...JSON.parse(JSON.stringify(src)),  // 深拷贝（结构简单，无函数）
+      ...cloneBase,
       id: newId,
       name: `${src.name} · 副本`,
       active: 0,
     }
-    set({ personas: [...get().personas, copy] })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 📋 复制人设: ${src.name} → ${copy.name}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas: [...get().personas, copy],
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] 📋 复制人设: ${src.name} → ${copy.name}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     get().persistPersonas()
   },
 
@@ -3473,6 +3730,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   },
 
   // 从 localStorage 恢复人设列表（覆盖种子数据，仅当有数据时）
+  // 带版本字段：schemaVersion 不匹配时走迁移逻辑（现在为 v1）
   hydratePersonas: () => {
     if (typeof window === 'undefined') return
     try {
@@ -3488,9 +3746,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
           skillConfig: p.skillConfig ?? { enabledSkills: [], skillParams: {}, recommendedSops: [], enabledSops: [] },
           styleExtends: p.styleExtends ?? { greetingTemplates: [], closingTemplates: [], comfortTemplates: [], bannedPhrases: [], frequentEmojis: [] },
         }))
-        set({ personas: safe })
-        get().logs.unshift({ level: 'system' as const, msg: `[PERSONA] 已从本地恢复 ${safe.length} 个人设`, ts: Date.now() })
-        set({ logs: [...get().logs] })
+        set({
+          personas: safe,
+          logs: [{
+            level: 'system' as const,
+            msg: `[PERSONA] 已从本地恢复 ${safe.length} 个人设`,
+            ts: Date.now(),
+          }, ...get().logs].slice(0, LOG_CAP),
+        })
       }
     } catch (e) {
       console.error('[PERSONA] hydrate 失败:', e)
@@ -3521,14 +3784,20 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       if (!trimmed) return null
       const parsed = JSON.parse(trimmed)
       // 兼容两种格式：带 __type 的封装对象 / 直接的 Persona 对象
-      const candidate = (parsed && parsed.__type === 'waos-persona-v1' && parsed.persona) ? parsed.persona : parsed
+      const candidate = (parsed && (parsed as { __type?: string }).__type === 'waos-persona-v1' && (parsed as { persona?: unknown }).persona) ? (parsed as { persona: Record<string, unknown> }).persona : parsed
       // 必填字段校验（至少有 name + systemPrompt）
       if (!candidate || typeof candidate !== 'object') return null
-      if (typeof candidate.name !== 'string' || typeof candidate.systemPrompt !== 'string') return null
-      const newPersona = normalizePersona({ ...candidate, name: `${candidate.name} · 导入` })
-      set({ personas: [...get().personas, newPersona] })
-      get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 📥 导入人设成功: ${newPersona.name} (${newPersona.id})`, ts: Date.now() })
-      set({ logs: [...get().logs] })
+      const c = candidate as { name?: unknown; systemPrompt?: unknown }
+      if (typeof c.name !== 'string' || typeof c.systemPrompt !== 'string') return null
+      const newPersona = normalizePersona({ ...(candidate as Partial<Persona>), name: `${c.name} · 导入` })
+      set({
+        personas: [...get().personas, newPersona],
+        logs: [{
+          level: 'info' as const,
+          msg: `[PERSONA] 📥 导入人设成功: ${newPersona.name} (${newPersona.id})`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
       get().persistPersonas()
       return newPersona.id
     } catch (e) {
@@ -3540,8 +3809,13 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   applyPersonaTemplate: (templateId) => {
     const tpl = findTemplate(templateId)
     if (!tpl) {
-      get().logs.unshift({ level: 'warn' as const, msg: `[PERSONA] 模板不存在: ${templateId}`, ts: Date.now() })
-      set({ logs: [...get().logs] })
+      set({
+        logs: [{
+          level: 'warn' as const,
+          msg: `[PERSONA] 模板不存在: ${templateId}`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
       return ''
     }
     // 从模板构造完整 Persona（合并默认空字段）
@@ -3563,9 +3837,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       skillConfig: tpl.skillConfig,
       styleExtends: tpl.styleExtends,
     })
-    set({ personas: [...get().personas, newPersona] })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] ✨ 应用模板: ${tpl.name} (${tpl.templateId} → ${newPersona.id})`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      personas: [...get().personas, newPersona],
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] ✨ 应用模板: ${tpl.name} (${tpl.templateId} → ${newPersona.id})`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     get().persistPersonas()
     return newPersona.id
   },
@@ -3580,28 +3859,47 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   importFromShareCode: (code) => {
     const decoded = decodeShareCode(code)
     if (!decoded || typeof decoded !== 'object') return null
-    const candidate = (decoded as any)?.__type === 'waos-persona-v1' ? (decoded as any).persona : decoded
-    if (!candidate || typeof candidate.name !== 'string' || typeof candidate.systemPrompt !== 'string') return null
-    const newPersona = normalizePersona({ ...candidate, name: `${candidate.name} · 分享` })
-    set({ personas: [...get().personas, newPersona] })
-    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 🔗 从分享码导入: ${newPersona.name} (${newPersona.id})`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    // 用类型守护代替 `as any`，避免类型安全漏洞
+    const d = decoded as { __type?: string; persona?: Record<string, unknown> }
+    const candidate = d.__type === 'waos-persona-v1' ? d.persona : (decoded as Record<string, unknown>)
+    if (!candidate || typeof candidate !== 'object') return null
+    const c = candidate as { name?: unknown; systemPrompt?: unknown }
+    if (typeof c.name !== 'string' || typeof c.systemPrompt !== 'string') return null
+    const newPersona = normalizePersona({ ...(candidate as Partial<Persona>), name: `${c.name} · 分享` })
+    set({
+      personas: [...get().personas, newPersona],
+      logs: [{
+        level: 'info' as const,
+        msg: `[PERSONA] 🔗 从分享码导入: ${newPersona.name} (${newPersona.id})`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
     get().persistPersonas()
     return newPersona.id
   },
 
   // ─── 大模型 Provider actions ────────────────────────────────
   setActiveProvider: (providerId) => {
-    set({ activeProviderId: providerId })
     const provider = get().llmProviders.find(p => p.id === providerId)
-    get().logs.unshift({ level: 'system' as const, msg: `[LLM] 切换到 ${provider?.name}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      activeProviderId: providerId,
+      logs: [{
+        level: 'system' as const,
+        msg: `[LLM] 切换到 ${provider?.name ?? providerId}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
   },
 
   addProvider: (provider) => {
-    set({ llmProviders: [...get().llmProviders, provider] })
-    get().logs.unshift({ level: 'info' as const, msg: `[LLM] 新增 Provider: ${provider.name}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      llmProviders: [...get().llmProviders, provider],
+      logs: [{
+        level: 'info' as const,
+        msg: `[LLM] 新增 Provider: ${provider.name}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
   },
 
   updateProvider: (providerId, partial) => {
@@ -3616,8 +3914,13 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     const provider = get().llmProviders.find(p => p.id === providerId)
     if (!provider) return
 
-    get().logs.unshift({ level: 'info' as const, msg: `[LLM] 测试连接: ${provider.name}...`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      logs: [{
+        level: 'info' as const,
+        msg: `[LLM] 测试连接: ${provider.name}...`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
 
     // 模拟测试
     await new Promise(r => setTimeout(r, 800 + Math.random() * 1200))
@@ -3626,22 +3929,38 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     const latency = Math.floor(200 + Math.random() * 800)
 
     if (success) {
-      set({ llmProviders: get().llmProviders.map(p => p.id === providerId ? { ...p, status: 'connected' as const, latency } : p) })
-      get().logs.unshift({ level: 'info' as const, msg: `[LLM] ✅ ${provider.name} 连接成功 (${latency}ms)`, ts: Date.now() })
+      set({
+        llmProviders: get().llmProviders.map(p => p.id === providerId ? { ...p, status: 'connected' as const, latency } : p),
+        logs: [{
+          level: 'info' as const,
+          msg: `[LLM] ✅ ${provider.name} 连接成功 (${latency}ms)`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
     } else {
-      set({ llmProviders: get().llmProviders.map(p => p.id === providerId ? { ...p, status: 'error' as const } : p) })
-      get().logs.unshift({ level: 'error' as const, msg: `[LLM] ❌ ${provider.name} 连接失败`, ts: Date.now() })
+      set({
+        llmProviders: get().llmProviders.map(p => p.id === providerId ? { ...p, status: 'error' as const } : p),
+        logs: [{
+          level: 'error' as const,
+          msg: `[LLM] ❌ ${provider.name} 连接失败`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
     }
-    set({ logs: [...get().logs] })
   },
 
   // ─── 逆向服务 actions ──────────────────────────────────────
   checkReverseService: async (serviceId, cookie) => {
-    get().logs.unshift({ level: 'info' as const, msg: `[REVERSE] 检查服务: ${serviceId}...`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      logs: [{
+        level: 'info' as const,
+        msg: `[REVERSE] 检查服务: ${serviceId}...`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
 
     try {
-      const body: any = { action: 'check-docker', serviceId }
+      const body: { action: string; serviceId: string; cookie?: string } = { action: 'check-docker', serviceId }
       if (cookie) body.cookie = cookie
 
       const res = await fetch('/api/waos/reverse', {
@@ -3649,7 +3968,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      const data = await res.json()
+      const data = await res.json() as { running?: boolean }
 
       // 如果有 cookie，也检查 cookie
       let cookieValid = true
@@ -3659,29 +3978,39 @@ export const useOpsStore = create<OpsState>((set, get) => ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'check-cookie', cookie }),
         })
-        const cookieData = await cookieRes.json()
-        cookieValid = cookieData.valid
+        const cookieData = await cookieRes.json() as { valid?: boolean; reason?: string }
+        cookieValid = !!cookieData.valid
         if (!cookieValid) {
-          get().logs.unshift({ level: 'warn' as const, msg: `[REVERSE] Cookie 无效: ${cookieData.reason}`, ts: Date.now() })
+          set({
+            logs: [{
+              level: 'warn' as const,
+              msg: `[REVERSE] Cookie 无效: ${cookieData.reason || '未知原因'}`,
+              ts: Date.now(),
+            }, ...get().logs].slice(0, LOG_CAP),
+          })
         }
       }
 
+      const running = !!data?.running
       set({
         reverseServiceStatus: {
           ...get().reverseServiceStatus,
-          [serviceId]: { running: data.running, cookieValid, lastCheck: Date.now() },
+          [serviceId]: { running, cookieValid, lastCheck: Date.now() },
         },
+        logs: [{
+          level: running ? 'info' as const : 'warn' as const,
+          msg: `[REVERSE] ${serviceId}: ${running ? '✅ 运行中' : '⚠️ 未启动'} ${cookie ? (cookieValid ? 'Cookie有效' : 'Cookie无效') : ''}`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
       })
-
-      get().logs.unshift({
-        level: data.running ? 'info' as const : 'warn' as const,
-        msg: `[REVERSE] ${serviceId}: ${data.running ? '✅ 运行中' : '⚠️ 未启动'} ${cookie ? (cookieValid ? 'Cookie有效' : 'Cookie无效') : ''}`,
-        ts: Date.now(),
-      })
-      set({ logs: [...get().logs] })
     } catch (err) {
-      get().logs.unshift({ level: 'error' as const, msg: `[REVERSE] 检查失败: ${err}`, ts: Date.now() })
-      set({ logs: [...get().logs] })
+      set({
+        logs: [{
+          level: 'error' as const,
+          msg: `[REVERSE] 检查失败: ${err instanceof Error ? err.message : String(err)}`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
     }
   },
 
@@ -3692,7 +4021,11 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'generate-compose', serviceId, cookie }),
       })
-      const data = await res.json()
+      const data = await res.json() as { dockerCompose?: string; filename?: string }
+
+      if (!data?.dockerCompose) {
+        throw new Error('响应缺少 dockerCompose 字段')
+      }
 
       // 触发下载
       const blob = new Blob([data.dockerCompose], { type: 'text/yaml' })
@@ -3703,11 +4036,21 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       a.click()
       URL.revokeObjectURL(url)
 
-      get().logs.unshift({ level: 'info' as const, msg: `[REVERSE] 已生成 ${data.filename}，请运行 docker compose up -d`, ts: Date.now() })
-      set({ logs: [...get().logs] })
+      set({
+        logs: [{
+          level: 'info' as const,
+          msg: `[REVERSE] 已生成 ${data.filename}，请运行 docker compose up -d`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
     } catch (err) {
-      get().logs.unshift({ level: 'error' as const, msg: `[REVERSE] 生成失败: ${err}`, ts: Date.now() })
-      set({ logs: [...get().logs] })
+      set({
+        logs: [{
+          level: 'error' as const,
+          msg: `[REVERSE] 生成失败: ${err instanceof Error ? err.message : String(err)}`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
     }
   },
 
@@ -3715,6 +4058,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   startStressMonitor: () => {
     const sm = get().stressMonitor
     if (sm.running) return
+    const intervalMin = Math.floor(sm.intervalMs / 1000 / 60)
     set({
       stressMonitor: {
         ...sm,
@@ -3727,38 +4071,45 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         history: [],
         errors: [],
         health: null,
-      }
+      },
+      logs: [{
+        level: 'system' as const,
+        msg: `[STRESS] 🔴 压测监控已启动 — 每${intervalMin}分钟一轮`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
     })
-    get().logs.unshift({ level: 'system' as const, msg: `[STRESS] 🔴 压测监控已启动 — 每${Math.floor(sm.intervalMs / 1000 / 60)}分钟一轮`, ts: Date.now() })
-    set({ logs: [...get().logs] })
     // 立即跑一轮
     get().runStressRound()
-    // 设置定时器
-    const timer = setInterval(() => {
+    // 设置定时器（用模块级 stressTimer，HMR 安全）
+    if (stressTimer) clearInterval(stressTimer)
+    stressTimer = setInterval(() => {
       if (!get().stressMonitor.running) {
-        clearInterval(timer)
+        if (stressTimer) {
+          clearInterval(stressTimer)
+          stressTimer = null
+        }
         return
       }
       get().runStressRound()
     }, sm.intervalMs)
-    // 存 timer ID 到 window 上
-    if (typeof window !== 'undefined') {
-      (window as any).__stressTimer = timer
-    }
   },
 
   stopStressMonitor: () => {
     const sm = get().stressMonitor
     if (!sm.running) return
-    if (typeof window !== 'undefined' && (window as any).__stressTimer) {
-      const timer = (window as any).__stressTimer as ReturnType<typeof setInterval>
-      clearInterval(timer)
-      ;(window as any).__stressTimer = null
+    if (stressTimer) {
+      clearInterval(stressTimer)
+      stressTimer = null
     }
     const duration = Math.floor((Date.now() - sm.startedAt) / 1000 / 60)
-    set({ stressMonitor: { ...sm, running: false } })
-    get().logs.unshift({ level: 'system' as const, msg: `[STRESS] 🟢 压测监控已停止 — 共${sm.currentRound}轮 ${duration}分钟 PASS=${sm.totalPass} FAIL=${sm.totalFail}`, ts: Date.now() })
-    set({ logs: [...get().logs] })
+    set({
+      stressMonitor: { ...sm, running: false },
+      logs: [{
+        level: 'system' as const,
+        msg: `[STRESS] 🟢 压测监控已停止 — 共${sm.currentRound}轮 ${duration}分钟 PASS=${sm.totalPass} FAIL=${sm.totalFail}`,
+        ts: Date.now(),
+      }, ...get().logs].slice(0, LOG_CAP),
+    })
   },
 
   runStressRound: async () => {
@@ -3930,12 +4281,16 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     } catch (e: any) { addResult('攻击', '原型污染', 'FAIL', e.message, 0) }
 
     // 13. 系统健康 + 内存监控
-    let healthInfo: any = null
     try {
-      const res = await fetch('/api/waos/health?XTransformPort=3000').then(r => r.json())
-      healthInfo = res.memory
-      addResult('健康', `内存${res.memory.rss}MB`, res.memory.rss < 4000 ? 'PASS' : 'WARN',
-        `RSS=${res.memory.rss}MB Heap=${res.memory.heapUsed}/${res.memory.heapTotal}MB Uptime=${res.uptimeHuman}`, 0)
+      const res = await fetch('/api/waos/health?XTransformPort=3000').then(r => r.json()) as {
+        memory?: { rss?: number; heapUsed?: number; heapTotal?: number }; uptimeHuman?: string
+      }
+      const mem = res?.memory
+      if (!mem || typeof mem.rss !== 'number') {
+        throw new Error('health 响应缺少 memory.rss')
+      }
+      addResult('健康', `内存${mem.rss}MB`, mem.rss < 4000 ? 'PASS' : 'WARN',
+        `RSS=${mem.rss}MB Heap=${mem.heapUsed}/${mem.heapTotal}MB Uptime=${res.uptimeHuman ?? 'n/a'}`, 0)
     } catch (e: any) { addResult('健康', '内存监控', 'FAIL', e.message, 0) }
 
     // 汇总
@@ -3957,8 +4312,13 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     })
 
     if (roundFail > 0) {
-      get().logs.unshift({ level: 'error' as const, msg: `[STRESS] 第${round}轮: ❌ ${roundFail}个失败`, ts: Date.now() })
-      set({ logs: [...get().logs] })
+      set({
+        logs: [{
+          level: 'error' as const,
+          msg: `[STRESS] 第${round}轮: ❌ ${roundFail}个失败`,
+          ts: Date.now(),
+        }, ...get().logs].slice(0, LOG_CAP),
+      })
     }
   },
 
@@ -4468,9 +4828,9 @@ export const useAuditForLead = (leadId: string | null) => {
         leadId,
         actor: e.type === 'llm.call' ? 'ai' : e.type === 'human.handoff' ? 'system' : 'system',
         action: e.type,
-        from: e.payload?.from,
-        to: e.payload?.to,
-        reason: e.payload?.reason || (e.type === 'llm.call' ? `tokens=${e.payload?.msg?.tokensUsed} latency=${e.payload?.msg?.latency}ms` : undefined),
+        from: e.payload?.from as string | undefined,
+        to: e.payload?.to as string | undefined,
+        reason: (e.payload?.reason as string | undefined) || (e.type === 'llm.call' ? `tokens=${(e.payload?.msg as { tokensUsed?: number } | undefined)?.tokensUsed} latency=${(e.payload?.msg as { latency?: number } | undefined)?.latency}ms` : undefined),
         traceId: e.traceId,
         ts: e.ts,
       })) as AuditEntry[]
@@ -4513,14 +4873,20 @@ export const useAuditForLead = (leadId: string | null) => {
   }, [auditLog, events, lead, leadId])
 }
 
-// ─── 启动时从 localStorage 恢复人设配置（仅浏览器端执行一次） ────────
+// ─── 启动时从 localStorage 恢复持久化状态（仅浏览器端执行一次） ────────
 // 用 setTimeout(0) 延迟到下一个 tick，确保 store 已完全初始化。
+// 同时恢复：personas（人设配置）/ modelCookies（AI 大脑 Cookie）
 if (typeof window !== 'undefined') {
   setTimeout(() => {
     try {
       useOpsStore.getState().hydratePersonas()
     } catch (e) {
       console.warn('[PERSONA] hydrate 启动失败（忽略，使用种子数据）:', e)
+    }
+    try {
+      useOpsStore.getState().hydrateModelCookies()
+    } catch (e) {
+      console.warn('[BRAIN] hydrate modelCookies 启动失败（忽略，使用空 cookies）:', e)
     }
   }, 0)
 }

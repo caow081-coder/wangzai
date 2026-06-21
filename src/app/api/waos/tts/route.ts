@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getZAI } from '@/lib/zai'
+import { filterOutput } from '@/lib/safety'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -30,10 +31,32 @@ const PERSONA_VOICES: Record<string, { name: string; desc: string; gender: 'male
 }
 
 export async function POST(req: NextRequest) {
-  const { text, personaId = 'consultant', config = {} } = await req.json()
+  let body: { text?: string; personaId?: string; config?: Record<string, unknown> }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+  const { text, personaId = 'consultant', config = {} } = body || {}
 
-  if (!text || !text.trim()) {
+  if (!text || typeof text !== 'string' || !text.trim()) {
     return NextResponse.json({ error: 'text required' }, { status: 400 })
+  }
+
+  // 防止超大文本请求 DoS（单次 TTS 最多 1000 字）
+  if (text.length > 1000) {
+    return NextResponse.json({ error: `text too long (max 1000 chars, got ${text.length})` }, { status: 413 })
+  }
+
+  // 安全过滤：防止 TTS 合成违规/价格承诺内容
+  const filtered = filterOutput(text)
+  if (filtered.filtered) {
+    console.warn(`[TTS] 输入被安全过滤: personaId=${personaId} reason=${filtered.reason}`)
+    return NextResponse.json({
+      error: 'text contains banned content, refused',
+      reason: filtered.reason,
+      layer: filtered.layer,
+    }, { status: 400 })
   }
 
   const startedAt = Date.now()
@@ -53,6 +76,7 @@ export async function POST(req: NextRequest) {
     const base64 = Buffer.from(audioBuffer).toString('base64')
 
     return NextResponse.json({
+      success: true,
       audio: `data:audio/mp3;base64,${base64}`,
       voice: voice.desc,
       personaId,

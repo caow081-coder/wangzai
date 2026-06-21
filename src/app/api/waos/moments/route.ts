@@ -17,6 +17,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { getMomentsConnector } from '@/lib/moments/connector'
+import { sanitizeInput } from '@/lib/safety'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -87,6 +88,13 @@ export async function POST(req: NextRequest) {
       }
 
       case 'reply_comment': {
+        if (!body.commentId || !body.content || typeof body.content !== 'string') {
+          return NextResponse.json({ action: 'reply_comment', success: false, error: 'commentId and content required' }, { status: 400 })
+        }
+        const sanity = sanitizeInput(body.content)
+        if (!sanity.ok) {
+          return NextResponse.json({ action: 'reply_comment', success: false, error: `内容未过安全检测: ${sanity.reason}`, layer: sanity.layer }, { status: 400 })
+        }
         const ok = await connector.replyComment(body.commentId, body.content)
         return NextResponse.json({
           action: 'reply_comment',
@@ -103,6 +111,13 @@ export async function POST(req: NextRequest) {
       }
 
       case 'post_moment': {
+        if (!body.content || typeof body.content !== 'string') {
+          return NextResponse.json({ action: 'post_moment', success: false, error: 'content required' }, { status: 400 })
+        }
+        const sanity = sanitizeInput(body.content)
+        if (!sanity.ok) {
+          return NextResponse.json({ action: 'post_moment', success: false, error: `内容未过安全检测: ${sanity.reason}`, layer: sanity.layer }, { status: 400 })
+        }
         const ok = await connector.postMoment(body.content, body.images)
         return NextResponse.json({
           action: 'post_moment',

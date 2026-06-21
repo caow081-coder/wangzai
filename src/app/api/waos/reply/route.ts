@@ -59,10 +59,15 @@ const FALLBACK_MSG =
   '【系统兜底】实在抱歉，当前咨询人数较多，您的需求我已记录，主管稍后会亲自为您解答。'
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as ReplyRequest
-  const { leadId, userMessage, personaName, history = [] } = body
+  let body: ReplyRequest
+  try {
+    body = (await req.json()) as ReplyRequest
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+  const { leadId, userMessage, personaName, history = [] } = body || {}
 
-  if (!leadId || !userMessage) {
+  if (!leadId || !userMessage || typeof userMessage !== 'string') {
     return NextResponse.json({ error: 'leadId and userMessage required' }, { status: 400 })
   }
 

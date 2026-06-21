@@ -9,14 +9,37 @@ import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import {
   Settings as SettingsIcon, Sliders, Bell, Eye, RefreshCw, Zap,
+  Flame, Bot, Radio, Clock, TrendingUp, Lock,
 } from 'lucide-react'
 import { toast } from 'sonner'
+
+// UI-COMPACT: 原顶栏的 6 大模块快捷键全部收进设置 Dialog，作为顶部入口
+const MODULE_TABS = [
+  { id: 'scheduler',   label: '定时任务', icon: <Flame className="w-3.5 h-3.5" />, desc: '线索排队与优先级' },
+  { id: 'ai',          label: 'AI设置',  icon: <Bot className="w-3.5 h-3.5" />,   desc: '回复生成与安全' },
+  { id: 'channel',     label: '全渠道',  icon: <Radio className="w-3.5 h-3.5" />, desc: '微信/抖音/视频号' },
+  { id: 'lifecycle',   label: '客户跟进', icon: <Clock className="w-3.5 h-3.5" />, desc: '唤醒/群发/客诉' },
+  { id: 'attribution', label: '效果分析', icon: <TrendingUp className="w-3.5 h-3.5" />, desc: 'AB测试/漏斗' },
+  { id: 'infra',       label: '系统设置', icon: <Lock className="w-3.5 h-3.5" />,   desc: '事件总线/锁/监控' },
+] as const
 
 export function SettingsDialog() {
   const open = useOpsStore(s => s.settingsOpen)
   const close = useOpsStore(s => s.closeSettings)
   const settings = useOpsStore(s => s.settings)
   const update = useOpsStore(s => s.updateSettings)
+  const openProDrawer = useOpsStore(s => s.openProDrawer)
+
+  // 打开 ProDrawer 并切换到对应 tab，同时关闭设置 Dialog
+  const openModule = (tab: string) => {
+    close()
+    openProDrawer()
+    // 用微任务延后派发，确保 ProDrawer 已挂载并监听事件
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('waos:proTab', { detail: tab }))
+    }, 50)
+    toast.info(`已切换到「${MODULE_TABS.find(m => m.id === tab)?.label}」模块`)
+  }
 
   const reset = () => {
     update({
@@ -55,6 +78,28 @@ export function SettingsDialog() {
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto waos-scrollbar px-5 py-4 space-y-5">
+          {/* ─── 6 大模块快捷入口（UI-COMPACT: 从顶栏迁入）─── */}
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <Zap className="w-3.5 h-3.5 text-emerald-400" />
+              <h3 className="text-[11px] font-semibold tracking-wider text-zinc-300 uppercase">模块快捷入口</h3>
+              <span className="text-[9px] text-zinc-500 ml-auto">点击进入对应模块</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {MODULE_TABS.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => openModule(t.id)}
+                  className="flex items-center gap-1.5 px-2.5 py-2 rounded-md text-[11px] font-medium bg-[oklch(0.13_0_0)] border border-[oklch(1_0_0/10%)] text-zinc-300 hover:bg-[oklch(1_0_0/5%)] hover:border-emerald-500/40 hover:text-emerald-300 transition-colors"
+                  title={t.desc}
+                >
+                  {t.icon}
+                  <span className="truncate">{t.label}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
           {/* ─── Scheduler Parameters ─── */}
           <Section icon={<Sliders className="w-3.5 h-3.5 text-emerald-400" />} title="调度器参数">
             <SliderRow

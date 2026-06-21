@@ -1,18 +1,38 @@
 'use client'
 
+// 旺财顶栏（精简版 UI-COMPACT）
+// 设计原则：顶栏只保留"高频核心操作"，所有长尾功能收进设置 Dialog / AI 大脑 Dialog
+// 从左到右：
+//   1. 旺财 logo
+//   2. 多微信号切换
+//   3. 人设切换（含"编辑人设"入口）
+//   4. 焦点三态（自动跟进 / 置顶 / 勿扰）
+//   5. flex-1 占位
+//   6. 实时指标（线索 / 队列 — 更紧凑）
+//   7. 搜索
+//   8. 连接状态点
+//   9. 微信连接（登录+启动+停止 三合一）
+//  10. AI 大脑（合并：原"AI大脑" + "大模型对接" — 打开统一 Dialog）
+//  11. 通知
+//  12. 主题切换（浅 / 深 / 自动 — 单按钮循环）
+//  13. 全局熔断
+//  14. 设置（齿轮 — 点击打开 SettingsDialog，原 6 数字快捷键作为 Dialog 顶部入口）
+
 import { useOpsStore } from '@/store/useOpsStore'
-import { Bell, Settings, ChevronDown, Sparkles, Flame, Bot, Radio, Clock, TrendingUp, Lock, Search, Power, Sun, Moon, Monitor, Brain, MessageCircle } from 'lucide-react'
+import {
+  Bell, Settings, ChevronDown, Flame, Search, Power,
+  Sun, Moon, Monitor, Brain, MessageCircle, Pencil,
+} from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
-const MODULE_TABS = [
-  { id: 'scheduler',  num: '1', label: '定时任务', icon: <Flame className="w-3.5 h-3.5" /> },
-  { id: 'ai',         num: '2', label: 'AI设置',  icon: <Bot className="w-3.5 h-3.5" /> },
-  { id: 'channel',    num: '3', label: '全渠道', icon: <Radio className="w-3.5 h-3.5" /> },
-  { id: 'lifecycle',  num: '4', label: '客户跟进', icon: <Clock className="w-3.5 h-3.5" /> },
-  { id: 'attribution',num: '5', label: '效果分析', icon: <TrendingUp className="w-3.5 h-3.5" /> },
-  { id: 'infra',      num: '6', label: '系统设置', icon: <Lock className="w-3.5 h-3.5" /> },
-] as const
+// 主题循环顺序：light → dark → auto → light ...
+const THEME_CYCLE = ['light', 'dark', 'auto'] as const
+const THEME_LABEL: Record<typeof THEME_CYCLE[number], string> = {
+  light: '浅色',
+  dark: '深色',
+  auto: '自动',
+}
 
 export function TopBar() {
   const activePersonaId = useOpsStore(s => s.activePersonaId)
@@ -20,6 +40,7 @@ export function TopBar() {
   const setActivePersona = useOpsStore(s => s.setActivePersona)
   const openSettings = useOpsStore(s => s.openSettings)
   const openNotifications = useOpsStore(s => s.openNotifications)
+  const openPersonaEditor = useOpsStore(s => s.openPersonaEditor)
   const setBrainOpen = useOpsStore(s => s.setBrainOpen)
   const modelCookies = useOpsStore(s => s.modelCookies)
   const wechatReal = useOpsStore(s => s.wechatReal)
@@ -31,7 +52,6 @@ export function TopBar() {
   const connection = useOpsStore(s => s.connection)
   const focusMode = useOpsStore(s => s.focusMode)
   const setFocusMode = useOpsStore(s => s.setFocusMode)
-  const openProDrawer = useOpsStore(s => s.openProDrawer)
   const metrics = useOpsStore(s => s.metrics)
   const killSwitchActive = useOpsStore(s => s.killSwitchActive)
   const toggleKillSwitch = useOpsStore(s => s.toggleKillSwitch)
@@ -42,14 +62,18 @@ export function TopBar() {
   const unreadCount = notifications.filter(n => !n.read).length
   const activePersona = personas.find(p => p.id === activePersonaId) || personas[0]
 
-  const openModule = (tab: string) => {
-    openProDrawer()
-    window.dispatchEvent(new CustomEvent('waos:proTab', { detail: tab }))
+  // 主题循环切换：light → dark → auto → light
+  const cycleTheme = () => {
+    const idx = THEME_CYCLE.indexOf(theme as typeof THEME_CYCLE[number] ?? 'auto')
+    const next = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length]
+    updateSettings({ theme: next })
+    toast.info(`主题切换：${THEME_LABEL[next]}`)
   }
+  const ThemeIcon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor
 
   return (
-    <header className="h-14 shrink-0 flex items-center px-4 gap-3 bg-card/80 backdrop-blur-xl border-b border-border/60">
-      {/* Logo — 旺财 */}
+    <header className="h-14 shrink-0 flex items-center px-3 gap-2 bg-card/80 backdrop-blur-xl border-b border-border/60">
+      {/* 1. Logo — 旺财 */}
       <div className="flex items-center gap-2 shrink-0">
         <div className="w-8 h-8 rounded-lg overflow-hidden shadow-sm ring-1 ring-emerald-500/20">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -58,10 +82,10 @@ export function TopBar() {
         <span className="font-bold text-[15px] tracking-tight hidden sm:inline bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">旺财</span>
       </div>
 
-      {/* 多微信号切换 */}
+      {/* 2. 多微信号切换 */}
       <WechatAccountSwitcher />
 
-      {/* 人设切换 */}
+      {/* 3. 人设切换（含编辑入口） */}
       <div className="relative shrink-0">
         <button
           onClick={() => setPersonaMenuOpen(o => !o)}
@@ -92,12 +116,29 @@ export function TopBar() {
                   {p.id === activePersonaId && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-2 shrink-0" />}
                 </button>
               ))}
+              {/* 编辑人设入口 + 新建人设入口 */}
+              <div className="border-t border-border/60 mt-1 pt-1">
+                <button
+                  onClick={() => { openPersonaEditor(activePersona?.id ?? null); setPersonaMenuOpen(false) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground transition-colors apple-btn"
+                >
+                  <Pencil className="w-3 h-3" />
+                  ✏️ 编辑当前人设
+                </button>
+                <button
+                  onClick={() => { const newId = useOpsStore.getState().createPersona(); useOpsStore.getState().openPersonaEditor(newId); setPersonaMenuOpen(false) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground transition-colors apple-btn"
+                >
+                  <span className="text-[12px] leading-none">＋</span>
+                  ✨ 新建人设
+                </button>
+              </div>
             </div>
           </>
         )}
       </div>
 
-      {/* 焦点三态 */}
+      {/* 4. 焦点三态 */}
       <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-muted shrink-0 h-8">
         {([
           { id: 'FOLLOW' as const, label: '自动跟进', color: 'text-emerald-600' },
@@ -116,26 +157,11 @@ export function TopBar() {
         ))}
       </div>
 
-      {/* 6大模块快捷入口 */}
-      <div className="flex items-center gap-0.5 shrink-0">
-        {MODULE_TABS.map(t => (
-          <button
-            key={t.id}
-            onClick={() => openModule(t.id)}
-            className="flex items-center gap-1 px-2.5 h-8 rounded-lg text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors apple-btn"
-            title={`模块${t.num}: ${t.label}`}
-          >
-            <span className="text-[8px] opacity-40 font-mono">{t.num}</span>
-            {t.icon}
-            <span className="hidden lg:inline">{t.label}</span>
-          </button>
-        ))}
-      </div>
-
+      {/* 5. 占位 */}
       <div className="flex-1" />
 
-      {/* 实时关键指标 */}
-      <div className="flex items-center gap-3 text-[11px] font-mono shrink-0">
+      {/* 6. 实时关键指标（紧凑） */}
+      <div className="flex items-center gap-2 text-[11px] font-mono shrink-0">
         <span className="flex items-center gap-1">
           <span className="text-muted-foreground hidden sm:inline">线索</span>
           <span className="font-semibold">{metrics.activeLeads}</span>
@@ -150,7 +176,7 @@ export function TopBar() {
         </span>
       </div>
 
-      {/* 搜索 */}
+      {/* 7. 搜索 */}
       <button
         onClick={() => openCommandPalette()} aria-label="搜索"
         className="flex items-center gap-1 px-2 h-8 rounded-lg text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground transition-colors apple-btn shrink-0"
@@ -159,19 +185,18 @@ export function TopBar() {
         <kbd className="text-[9px] px-1 py-0.5 rounded bg-muted border border-border/60 hidden sm:inline">/</kbd>
       </button>
 
-      {/* 连接状态 */}
-      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${connection === 'connected' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} title={connection === 'connected' ? '已连接' : '连接中'} />
+      {/* 8. 连接状态点 */}
+      <span
+        className={`w-1.5 h-1.5 rounded-full shrink-0 ${connection === 'connected' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}
+        title={connection === 'connected' ? '已连接' : '连接中'}
+      />
 
-      {/* 真实微信接入 (ClawBot) */}
+      {/* 9. 微信连接（登录+启动+停止 三合一） */}
       <button
         onClick={() => {
-          if (!wechatReal.loggedIn) {
-            wechatLogin()
-          } else if (!wechatReal.running) {
-            wechatStart()
-          } else {
-            wechatStop()
-          }
+          if (!wechatReal.loggedIn) wechatLogin()
+          else if (!wechatReal.running) wechatStart()
+          else wechatStop()
         }}
         className={`relative w-8 h-8 rounded-lg transition-colors apple-btn shrink-0 flex items-center justify-center ${
           wechatReal.running
@@ -192,13 +217,13 @@ export function TopBar() {
           <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
         )}
         {wechatReal.messageCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 px-1 flex items-center justify-center rounded-full bg-blue-500 text-[9px] font-bold text-white">
+          <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 px-1 flex items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white">
             {wechatReal.messageCount}
           </span>
         )}
       </button>
 
-      {/* AI 大脑 — 多模型登录入口 */}
+      {/* 10. AI 大脑（统一入口：原 AI 大脑 + 大模型对接 合并） */}
       <button
         onClick={() => setBrainOpen(true)}
         className={`relative w-8 h-8 rounded-lg transition-colors apple-btn shrink-0 flex items-center justify-center ${
@@ -206,7 +231,8 @@ export function TopBar() {
             ? 'bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20'
             : 'hover:bg-muted text-muted-foreground'
         }`}
-        title="AI 大脑 — 登录各平台模型" aria-label="AI 大脑"
+        title="AI 大脑 — 模型配置 / 逆向扫码 / 测试统计"
+        aria-label="AI 大脑"
       >
         <Brain className="w-4 h-4" />
         {Object.keys(modelCookies).length > 0 && (
@@ -216,7 +242,7 @@ export function TopBar() {
         )}
       </button>
 
-      {/* 通知 */}
+      {/* 11. 通知 */}
       <button
         onClick={() => openNotifications()} aria-label="通知"
         className="relative w-8 h-8 rounded-lg hover:bg-muted transition-colors apple-btn shrink-0 flex items-center justify-center"
@@ -229,27 +255,17 @@ export function TopBar() {
         )}
       </button>
 
-      {/* 苹果风三态主题切换: 自动/浅色/深色 */}
-      <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-muted shrink-0 h-8">
-        {([
-          { id: 'auto' as const, icon: <Monitor className="w-3 h-3" />, label: '自动' },
-          { id: 'light' as const, icon: <Sun className="w-3 h-3" />, label: '浅色' },
-          { id: 'dark' as const, icon: <Moon className="w-3 h-3" />, label: '深色' },
-        ]).map(t => (
-          <button
-            key={t.id}
-            onClick={() => { updateSettings({ theme: t.id }); toast.info(`主题: ${t.label}`) }}
-            className={`flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-medium transition-all apple-btn ${
-              theme === t.id ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
-            }`}
-            title={t.label}
-          >
-            {t.icon}
-          </button>
-        ))}
-      </div>
+      {/* 12. 主题切换（单按钮循环：light → dark → auto） */}
+      <button
+        onClick={cycleTheme}
+        className="w-8 h-8 rounded-lg hover:bg-muted transition-colors apple-btn shrink-0 flex items-center justify-center"
+        title={`主题：${THEME_LABEL[theme as typeof THEME_CYCLE[number]] ?? '自动'}（点击切换）`}
+        aria-label="主题切换"
+      >
+        <ThemeIcon className="w-4 h-4 text-muted-foreground" />
+      </button>
 
-      {/* 全局熔断核按钮 */}
+      {/* 13. 全局熔断核按钮 */}
       <button
         onClick={() => {
           toggleKillSwitch()
@@ -266,7 +282,7 @@ export function TopBar() {
         <Power className="w-4 h-4" />
       </button>
 
-      {/* 设置 */}
+      {/* 14. 设置（齿轮 — 原 6 数字快捷键收进这里） */}
       <button
         onClick={() => openSettings()} aria-label="设置"
         className="w-8 h-8 rounded-lg hover:bg-muted transition-colors apple-btn shrink-0 flex items-center justify-center"

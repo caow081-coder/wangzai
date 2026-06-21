@@ -13,6 +13,7 @@ import { ReplyStudio } from '@/components/waos/ReplyStudio'
 import { CommandPalette } from '@/components/waos/CommandPalette'
 import { NotificationsDrawer } from '@/components/waos/NotificationsDrawer'
 import { SettingsDialog } from '@/components/waos/SettingsDialog'
+import { PersonaEditor } from '@/components/waos/PersonaEditor'
 import { DownloadFloat } from '@/components/waos/DownloadFloat'
 import { BrainSettings } from '@/components/waos/BrainSettings'
 import { Splashscreen } from '@/components/waos/Splashscreen'
@@ -54,6 +55,7 @@ export default function Home() {
       <CommandPalette />
       <NotificationsDrawer />
       <SettingsDialog />
+      <PersonaEditor />
       <ProDrawer />
       <BrainSettings />
       <DownloadFloat />

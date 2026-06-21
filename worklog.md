@@ -697,3 +697,76 @@ Stage Summary:
 - 工作台集成: 每个客户旁可运行SOP,实时显示执行进度+暂停/终止
 - GitHub: commit 06a0fcb,本地远端同步
 - 下一阶段: 打包Windows exe测试真实嵌入 + 抖音/视频号嵌入 + RAG知识库
+
+---
+Task ID: UI-COMPACT
+Agent: full-stack-developer
+Task: 顶栏精简+右侧紧凑化
+
+Work Log:
+- 阅读 worklog.md / TopBar.tsx / DecisionPanel.tsx / BrainSettings.tsx / SettingsDialog.tsx / SopRunner.tsx，确认现状
+- TopBar.tsx 重写：删除 MODULE_TABS（6 数字快捷键）；主题切换合并为单按钮循环 light→dark→auto；人设菜单底部加"编辑当前人设"入口（调用 openPersonaEditor）；AI 大脑按钮 title 改为"模型配置/逆向扫码/测试统计"，统一指向 BrainSettings Dialog
+- BrainSettings.tsx 重写为 3-tab 结构：Tab1 模型配置（5 个模型 + 手动 Cookie 编辑/测试/清除）、Tab2 逆向登录（4 个 loginUrl 模型 + 扫码登录 + 自动检测）、Tab3 测试统计（降级链总览 + 一键测试 + 单模型测试）。原 LoginProgress 弹窗逻辑保留
+- DecisionPanel.tsx 紧凑化：
+  - 新增 CollapsibleSection 通用组件（Framer Motion 折叠/展开）
+  - MonitorBar：px-2 py-2.5 → px-1.5 py-1.5，数字 text-[20px] → text-[14px]，标签 text-[9px] → text-[10px]
+  - StressMonitorPanel：头部 py-2 → py-1.5，字号 text-[11px] → text-[10px]，统计行 pb-2 → pb-1.5（默认已折叠）
+  - LeadHeader：p-4 → p-3，头像 w-12 → w-10，名字 text-[16px] → text-[14px]，意向分/标签同栏 flex-wrap
+  - SalesCopilot：成交概率大数字 → 4 字段 1 行 4 列（成交/阶段/策略/下一步），风险/案例移到 header
+  - LeadFormSection：4 字段 space-y-2.5 竖排 → grid-cols-4 gap-1.5 1 行 4 列，情绪 Slider 紧凑版（label+emoji+数字同栏）
+  - Predictions：p-4 → p-3，p-2.5 → p-2，text-[18px] → text-[16px]
+  - Actions：grid-cols-2 大按钮 → 一行 4 个小图标按钮（h-8 rounded-lg，文字 sm:inline 隐藏）
+  - SopRunButton 包裹：px-4 pb-4 -mt-2 → px-3 pb-3 -mt-1
+  - ReplySuggestions：p-4 → p-3，mb-3 → mb-2，话术卡片 p-2.5 → p-2
+  - CustomerMemory / WhyDecision / StateMachine / PersonaCard：全部套 CollapsibleSection 默认折叠（PersonaCard 内部"编辑人设"按钮 stopPropagation 避免触发折叠）
+- SopRunner.tsx SopInstanceCard：原 `if (instances.length === 0) return null` → 仅展示 running/paused 实例 `activeInstances.filter(...)`，已完成/失败的实例通过事件流查看；外层 p-4 → p-3，mb-3 → mb-2
+- SettingsDialog.tsx：顶部加"模块快捷入口" section（3x2 grid），6 个按钮点击调用 openModule(tabId) → close() + openProDrawer() + 延后 50ms 派发 waos:proTab 事件 + toast 通知
+- bun run lint 通过：0 errors，4 warnings（均为 unused eslint-disable directive，无害）
+
+Stage Summary:
+- 顶栏从 14 个元素精简到 11 个，删除 6 个数字快捷键，主题从 3 按钮变 1 按钮
+- 右侧 DecisionPanel 整体高度大幅压缩：一屏可见 LeadHeader + SalesCopilot + LeadForm + Predictions + Actions + ReplySuggestions（核心信息），CustomerMemory/WhyDecision/StateMachine/PersonaCard 默认折叠
+- AI 大脑 + 大模型对接 合并为 1 个统一 Dialog，3 个 tab 分别管理配置/登录/测试
+- 文件改动：TopBar.tsx (333→312行)、BrainSettings.tsx (541→502行)、DecisionPanel.tsx (1097→1110行)、SettingsDialog.tsx (292→313行)、SopRunner.tsx (695→697行)
+- 所有功能完整保留，原顶栏 6 数字快捷键的访问入口迁移到设置 Dialog，无功能丢失
+
+---
+Task ID: PERSONA-REFACTOR
+Agent: full-stack-developer
+Task: 人设系统深度重构+SOP融入
+
+Work Log:
+- 阅读前置文件：worklog.md（项目全貌）、useOpsStore.ts（Persona 接口 + 5 个种子人设）、templates.ts（7 个 SOP 模板 idHint）、skills.ts（9 个 Skill 定义）、TopBar.tsx（人设切换 UI）
+- 第一部分：在 src/store/useOpsStore.ts 的 Persona 接口新增 4 个字段块（business / contact / skillConfig / styleExtends），共 ~55 行新接口定义，全部带中文 JSDoc 注释
+- 第二部分：为 5 个种子人设（苏念安/顾倾城/叶之秋/陈墨白/江月明）填充 business/contact/skillConfig/styleExtends 配置，每人设 ~50 行（车型池/价格区间/联系方式/启用的技能列表/推荐 SOP/开场白+逼单+安抚话术模板/禁用词/常用 emoji）
+- 第三部分：在 store Actions 接口新增 9 个 CRUD 方法签名（updatePersonaBusiness/updatePersonaContact/togglePersonaSkill/togglePersonaSop/updatePersonaStyle/createPersona/duplicatePersona/applyRecommendedSops/persistPersonas/hydratePersonas）
+- 第四部分：在 store 实现这 9 个方法（约 220 行），所有写操作后自动调用 persistPersonas 持久化到 localStorage('waos:personas')
+- 第五部分：在 store 末尾追加 setTimeout(0) 启动时自动 hydratePersonas，刷新页面不丢配置；旧数据兼容兜底（business/skillConfig/styleExtends 缺失字段自动补默认）
+- 第六部分：实现 buildPersonaContextPrompt(persona) 工具函数（~75 行），把 business.carModels/priceRange + contact.phone/wechat/storeAddress + styleExtends.greetingTemplates/closingTemplates/comfortTemplates/bannedPhrases/frequentEmojis + skillConfig.enabledSops 拼装成 system prompt
+- 第七部分：修改 sendClientMessage 方法，在调用 /api/waos/brain 时 messages 数组首位插入 { role: 'system', content: personaSystemPrompt }，让 AI 能引用真实业务数据回答"卖什么车/多少钱/地址在哪"
+- 第八部分：创建 src/components/waos/PersonaEditor.tsx 完整编辑器组件（~560 行），5 个 Tab：
+    * 基本信息（名称/简称/头像/角色/描述/成交率/容量 Slider/System Prompt）
+    * 业务能力（车型多选 Checkbox 卡片+类型多选+价格 Slider+主推车型 Select+实时预览）
+    * 联系方式（电话/微信/门店名/地址/营业时间/城市+预览）
+    * 技能与SOP（9 个 Skill Checkbox + 推荐 SOP 列表+一键启用按钮+已启用 SOP Badge 列表+全部 SOP 手动配置）
+    * 话术风格（开场白/逼单/安抚 Textarea 多行+禁用词+常用 emoji Input）
+- 第九部分：在 src/app/page.tsx 引入 PersonaEditor 并挂载；在 TopBar 人设下拉菜单新增"✏️ 编辑当前人设"+"✨ 新建人设"两个入口按钮
+- createPersona 方法返回新 ID（string），让 TopBar 能立即 openPersonaEditor(newId) 指向新人设
+- bun run lint 通过：0 errors，4 warnings（均为 pre-existing 的 unused eslint-disable directive，与本次改动无关）
+- bunx tsc --noEmit --skipLibCheck 验证：本次新增代码（PersonaEditor.tsx + page.tsx + store 改动）无任何 TypeScript 错误；useOpsStore.ts 仅有的 2 个错误（2430/3811 行）经 git stash 验证为 pre-existing
+- dev.log 末尾：✓ Compiled in 602ms，无编译错误
+
+Stage Summary:
+- Persona 接口从 17 个字段扩展到 21 个字段（新增 business/contact/skillConfig/styleExtends 4 个嵌套对象），彻底打破"人设=死字符串 systemPrompt"的旧模式
+- 5 个种子人设全部填充真实业务数据：苏念安销 GLC/C级/E级/GLE（30-80万）/顾倾城销 S级/迈巴赫/AMG（80-200万）/叶之秋售后全系/陈墨白营销裂变/江月明 BD 旗舰+MPV
+- 人设技能系统从硬编码 skills 字符串数组升级为 skillConfig.enabledSkills（引用 SOP 引擎 9 个原子能力 ID），可启停、可一键应用推荐 SOP
+- AI 大脑调用链：sendClientMessage → buildPersonaContextPrompt → /api/waos/brain 的 messages 首位插入 system 消息，让 AI 知道"我卖什么车/价格区间/门店地址/禁用词"
+- 新增 9 个 store 方法 + 1 个工具函数 + 1 个完整编辑器组件，所有改动持久化到 localStorage，刷新页面配置不丢失
+- 文件改动：
+    * src/store/useOpsStore.ts（3837 → 3849 行，净增 ~440 行：接口扩展 + 5 种子人设填充 + 9 方法实现 + buildPersonaContextPrompt + hydrate 启动钩子）
+    * src/components/waos/PersonaEditor.tsx（新增 562 行，5 Tabs 完整编辑器）
+    * src/app/page.tsx（+2 行：import + 挂载 PersonaEditor）
+    * src/components/waos/TopBar.tsx（+8 行：人设下拉新增"编辑/新建"按钮）
+- 不破坏现有功能：5 个种子人设的 id/name/avatar/systemPrompt/skills/personality/tone/role 等所有原字段完整保留，只是新增字段
+- SOP 模板 ID 引用对齐：high_intent_close / dormant_wake / complaint_handle / referral_fission / campaign_notify / after_sales_follow / new_customer_welcome（对应 src/lib/sop/templates.ts 的 idHint）
+- 9 个 Skill ID 引用对齐：intent_recognition / value_evaluation / strategy_select / reply_generate / crm_update / send_message / schedule_followup / human_handoff / knowledge_search（对应 src/lib/sop/skills.ts）

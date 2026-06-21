@@ -5,7 +5,7 @@ import {
   MessageCircle, Camera, Users, Send, Smile, Plus, ChevronLeft, MoreVertical,
   Heart, MessageSquare, Shield, Loader2, Clock, Sparkles, Search, Phone, Video,
   PanelLeft, Image as ImageIcon, FileText, Scissors, ScreenShare, Folder,
-  ChevronRight, X, Zap, AlertTriangle, Monitor,
+  ChevronRight, X, Zap, AlertTriangle, Monitor, Star, Grid3x3, Settings as SettingsIcon,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -14,7 +14,18 @@ import { MomentsPanel } from '@/components/waos/MomentsPanel'
 import { SopPanel } from '@/components/waos/sop/SopPanel'
 import { useElectronBridge, PlatformEmbedView } from '@/hooks/waos/useElectronBridge'
 
-type NavTab = 'chat' | 'contacts' | 'moments' | 'intercept' | 'sop'
+type NavTab = 'chat' | 'contacts' | 'favorites' | 'moments' | 'miniprogram' | 'channels' | 'intercept' | 'sop'
+
+// 真实 PC 微信左侧导航栏布局：聊天/通讯录/收藏/朋友圈/小程序/视频号/设置
+// SOP 引擎入口移到人设系统（不再独立 nav），但保留 tab 可从人设编辑器跳转
+const NAV_ITEMS: { id: NavTab; icon: React.ReactNode; label: string; badge?: number }[] = [
+  { id: 'chat',       icon: <MessageCircle className="w-[22px] h-[22px]" />, label: '聊天', badge: 3 },
+  { id: 'contacts',   icon: <Users className="w-[22px] h-[22px]" />, label: '通讯录' },
+  { id: 'favorites',  icon: <Star className="w-[22px] h-[22px]" />, label: '收藏' },
+  { id: 'moments',    icon: <Camera className="w-[22px] h-[22px]" />, label: '朋友圈' },
+  { id: 'channels',   icon: <Video className="w-[22px] h-[22px]" />, label: '视频号' },
+  { id: 'miniprogram',icon: <Grid3x3 className="w-[22px] h-[22px]" />, label: '小程序' },
+]
 
 // 补充类型定义（修复 TS2304）
 type InterceptTargetType = Record<string, unknown>
@@ -27,10 +38,10 @@ export function WeChatClient() {
 
   return (
     <div className="flex h-full min-h-0 bg-[#f5f5f5] dark:bg-[#1e1e1e]">
-      {/* ─── 左侧导航栏（PC微信窄条）────────────────────────── */}
-      <nav className="w-[60px] shrink-0 bg-[#2e2e2e] flex flex-col items-center py-4 gap-2">
+      {/* ─── 左侧导航栏（模拟真实 PC 微信窄条）────────────────────────── */}
+      <nav className="w-[56px] shrink-0 bg-[#2e2e2e] dark:bg-[#1a1a1a] flex flex-col items-center py-3 gap-1 border-r border-black/20">
         {/* 个人头像 — 显示微信连接状态 */}
-        <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-[14px] mb-2 relative ${
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-[14px] mb-2 relative cursor-pointer ${
           wechatReal.running ? 'bg-gradient-to-br from-emerald-400 to-teal-500' :
           wechatReal.loggedIn ? 'bg-gradient-to-br from-sky-400 to-blue-500' :
           'bg-zinc-600'
@@ -44,34 +55,53 @@ export function WeChatClient() {
           )}
         </div>
 
-        {/* 微信 */}
-        <NavButton active={navTab === 'chat'} onClick={() => setNavTab('chat')} icon={<MessageCircle className="w-5 h-5" />} label="微信" badge={wechatReal.messageCount || 3} />
-        {/* 通讯录 */}
-        <NavButton active={navTab === 'contacts'} onClick={() => setNavTab('contacts')} icon={<Users className="w-5 h-5" />} label="通讯录" />
-        {/* 朋友圈 */}
-        <NavButton active={navTab === 'moments'} onClick={() => setNavTab('moments')} icon={<Camera className="w-5 h-5" />} label="朋友圈" />
-        {/* 视频号截流 */}
-        <NavButton active={navTab === 'intercept'} onClick={() => setNavTab('intercept')} icon={<Video className="w-5 h-5" />} label="视频获客" badge={undefined} />
-        {/* SOP 引擎 */}
-        <NavButton active={navTab === 'sop'} onClick={() => setNavTab('sop')} icon={<span className="text-[18px] leading-none">🤖</span>} label="SOP引擎" />
+        {/* 真实微信导航按钮组 */}
+        {NAV_ITEMS.map(item => (
+          <NavButton
+            key={item.id}
+            active={navTab === item.id}
+            onClick={() => setNavTab(item.id)}
+            icon={item.icon}
+            label={item.label}
+            badge={item.badge}
+          />
+        ))}
+
+        {/* 视频号截流（高级功能，放底部） */}
+        <NavButton active={navTab === 'intercept'} onClick={() => setNavTab('intercept')} icon={<Zap className="w-[22px] h-[22px]" />} label="截流" />
 
         <div className="flex-1" />
 
-        {/* 设置 */}
-        <button className="w-9 h-9 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10 transition-colors">
-          <Folder className="w-4 h-4" />
+        {/* 底部：设置 + 更多 */}
+        <button className="w-9 h-9 rounded-lg flex items-center justify-center text-white/40 hover:bg-white/10 hover:text-white/80 transition-colors" title="设置">
+          <SettingsIcon className="w-[18px] h-[18px]" />
         </button>
-        <button className="w-9 h-9 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10 transition-colors">
-          <MoreVertical className="w-4 h-4" />
+        <button className="w-9 h-9 rounded-lg flex items-center justify-center text-white/40 hover:bg-white/10 hover:text-white/80 transition-colors" title="更多">
+          <MoreVertical className="w-[18px] h-[18px]" />
         </button>
       </nav>
 
       {/* ─── 中间内容区 ──────────────────────────────────────── */}
       {navTab === 'chat' && <ChatLayout />}
       {navTab === 'contacts' && <ContactsLayout />}
+      {navTab === 'favorites' && <PlaceholderLayout title="收藏" icon={<Star className="w-12 h-12 text-muted-foreground" />} desc="收藏的聊天记录、文件、链接" />}
       {navTab === 'moments' && <MomentsPanel />}
+      {navTab === 'channels' && <PlaceholderLayout title="视频号" icon={<Video className="w-12 h-12 text-muted-foreground" />} desc="视频号内容流（打包后嵌入真实视频号）" />}
+      {navTab === 'miniprogram' && <PlaceholderLayout title="小程序" icon={<Grid3x3 className="w-12 h-12 text-muted-foreground" />} desc="我的小程序" />}
       {navTab === 'intercept' && <InterceptLayout />}
       {navTab === 'sop' && <SopPanel />}
+    </div>
+  )
+}
+
+function PlaceholderLayout({ title, icon, desc }: { title: string; icon: React.ReactNode; desc: string }) {
+  return (
+    <div className="flex-1 flex items-center justify-center bg-[#f5f5f5] dark:bg-[#1e1e1e]">
+      <div className="text-center">
+        <div className="flex justify-center mb-3 opacity-40">{icon}</div>
+        <h3 className="text-[15px] font-medium text-muted-foreground mb-1">{title}</h3>
+        <p className="text-[11px] text-muted-foreground/60">{desc}</p>
+      </div>
     </div>
   )
 }

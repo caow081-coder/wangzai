@@ -2,7 +2,7 @@
 
 import { useOpsStore, type LeadForm } from '@/store/useOpsStore'
 import {
-  Sparkles, Flame, TrendingUp, Clock, Tag, ChevronRight,
+  Sparkles, Flame, TrendingUp, Clock, Tag, ChevronRight, ChevronDown,
   MessageSquare, ArrowUpRight, Hand, CheckCircle2, Bot, User, Shield,
   Star, Zap, Eye, AlertTriangle, Cpu, Loader2, Car, Wallet, Smile, Home,
 } from 'lucide-react'
@@ -51,7 +51,7 @@ export function DecisionPanel() {
         <Actions />
 
         {/* Phase 6: 运行 SOP 下拉按钮（紧跟快捷动作） */}
-        <div className="px-4 pb-4 -mt-2">
+        <div className="px-3 pb-3 -mt-1">
           <SopRunButton />
         </div>
 
@@ -90,6 +90,50 @@ function EmptyState() {
   )
 }
 
+// ─── 折叠区段通用组件（UI-COMPACT：长尾 section 默认折叠）─────
+function CollapsibleSection({
+  icon, title, badge, defaultOpen = false, children,
+}: {
+  icon: React.ReactNode
+  title: string
+  badge?: React.ReactNode
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="border-b border-border/60">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors apple-btn"
+        aria-expanded={open}
+      >
+        <div className="w-5 h-5 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+          {icon}
+        </div>
+        <h3 className="text-[12px] font-semibold flex-1 text-left truncate">{title}</h3>
+        {badge}
+        <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            className="overflow-hidden"
+          >
+            <div className="px-3 pb-3 pt-1">
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 // ─── 顶部固定监控条 ──────────────────────────────────────────
 function MonitorBar() {
   const metrics = useOpsStore(s => s.metrics)
@@ -99,127 +143,116 @@ function MonitorBar() {
   const eventBus = useOpsStore(s => s.eventBusStats)
   const openProDrawer = useOpsStore(s => s.openProDrawer)
 
+  // 紧凑版（UI-COMPACT）：高度从 ~h-9 缩到 ~h-7，字号普遍 -1px
   return (
     <div className="shrink-0 grid grid-cols-5 gap-px bg-border/40 border-b border-border/60">
       {/* HOT */}
       <button
         onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'scheduler' })) }}
-        className="bg-card px-2 py-2.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
+        className="bg-card px-1.5 py-1.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
       >
-        <div className={`text-[20px] font-bold font-mono leading-none ${metrics.hotCount > 0 ? 'text-rose-500' : 'text-muted-foreground'}`}>
+        <div className={`text-[14px] font-bold font-mono leading-none ${metrics.hotCount > 0 ? 'text-rose-500' : 'text-muted-foreground'}`}>
           {metrics.hotCount}
         </div>
-        <div className="text-[9px] text-muted-foreground mt-1">热门</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">热门</div>
       </button>
 
       {/* 队列 */}
       <button
         onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'scheduler' })) }}
-        className="bg-card px-2 py-2.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
+        className="bg-card px-1.5 py-1.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
       >
-        <div className={`text-[20px] font-bold font-mono leading-none ${metrics.queueDepth > 10 ? 'text-amber-500' : 'text-foreground'}`}>
+        <div className={`text-[14px] font-bold font-mono leading-none ${metrics.queueDepth > 10 ? 'text-amber-500' : 'text-foreground'}`}>
           {metrics.queueDepth}
         </div>
-        <div className="text-[9px] text-muted-foreground mt-1">队列</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">队列</div>
       </button>
 
       {/* AI 熔断 */}
       <button
         onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'ai' })) }}
-        className="bg-card px-2 py-2.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
+        className="bg-card px-1.5 py-1.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
       >
-        <div className={`text-[14px] font-bold font-mono leading-none ${
+        <div className={`text-[12px] font-bold font-mono leading-none ${
           circuitState === 'open' ? 'text-rose-500' :
           circuitState === 'half-open' ? 'text-amber-500' : 'text-emerald-500'
         }`}>
           {circuitState === 'open' ? '熔断' : circuitState === 'half-open' ? '探测' : '正常'}
         </div>
-        <div className="text-[9px] text-muted-foreground mt-1">AI</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">AI</div>
       </button>
 
       {/* 人工接管 */}
       <button
         onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'channel' })) }}
-        className="bg-card px-2 py-2.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
+        className="bg-card px-1.5 py-1.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
       >
-        <div className={`text-[20px] font-bold font-mono leading-none ${handoffCount > 0 ? 'text-orange-500' : 'text-muted-foreground'}`}>
+        <div className={`text-[14px] font-bold font-mono leading-none ${handoffCount > 0 ? 'text-orange-500' : 'text-muted-foreground'}`}>
           {handoffCount}
         </div>
-        <div className="text-[9px] text-muted-foreground mt-1">接管</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">接管</div>
       </button>
 
       {/* 事件总线 */}
       <button
         onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'infra' })) }}
-        className="bg-card px-2 py-2.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
+        className="bg-card px-1.5 py-1.5 hover:bg-muted/50 active:bg-muted transition-colors text-center group apple-btn"
       >
-        <div className={`text-[20px] font-bold font-mono leading-none ${eventBus.pending > 10 ? 'text-amber-500' : 'text-foreground'}`}>
+        <div className={`text-[14px] font-bold font-mono leading-none ${eventBus.pending > 10 ? 'text-amber-500' : 'text-foreground'}`}>
           {eventBus.pending}
         </div>
-        <div className="text-[9px] text-muted-foreground mt-1">待处理</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">待处理</div>
       </button>
     </div>
   )
 }
 
-// ─── SalesCopilot AI 副驾（4字段）────────────────────────────
+// ─── SalesCopilot AI 副驾（紧凑 1 行 4 列）────────────────────
 function SalesCopilot() {
   const copilot = useOpsStore(s => s.salesCopilot)
   if (!copilot) return null
 
   const probColor = copilot.dealProbability >= 70 ? 'text-emerald-600' : copilot.dealProbability >= 40 ? 'text-amber-600' : 'text-muted-foreground'
-  const probBg = copilot.dealProbability >= 70 ? 'bg-emerald-500' : copilot.dealProbability >= 40 ? 'bg-amber-500' : 'bg-muted'
+
+  // 4 字段紧凑横排：成交概率 / 当前阶段 / 推荐策略 / 下一步
+  const cells = [
+    { label: '成交', value: `${copilot.dealProbability}%`, color: probColor, title: `成交概率 ${copilot.dealProbability}%` },
+    { label: '阶段', value: copilot.stage, color: 'text-foreground', title: '当前阶段' },
+    { label: '策略', value: copilot.strategy, color: 'text-primary', title: '推荐策略' },
+    { label: '下一步', value: copilot.nextAction, color: 'text-foreground', title: '下一步动作' },
+  ]
 
   return (
-    <div className="p-4 border-b border-border/60">
-      <div className="flex items-center gap-2 mb-3">
+    <div className="p-3 border-b border-border/60">
+      <div className="flex items-center gap-2 mb-2">
         <div className="w-5 h-5 rounded-md bg-primary/10 flex items-center justify-center">
           <Bot className="w-3 h-3 text-primary" />
         </div>
         <h3 className="text-[12px] font-semibold">AI 副驾</h3>
         <span className="text-[9px] text-muted-foreground">决策依据</span>
+        {copilot.riskFlag && (
+          <span className="ml-auto flex items-center gap-1 text-[9px] text-rose-600">
+            <AlertTriangle className="w-2.5 h-2.5" />
+            {copilot.riskFlag}
+          </span>
+        )}
+        {copilot.recommendedCase && (
+          <span className="flex items-center gap-1 text-[9px] text-emerald-600">
+            <CheckCircle2 className="w-2.5 h-2.5" />
+            {copilot.recommendedCase}
+          </span>
+        )}
       </div>
 
-      {/* 成交概率大数字 */}
-      <div className="p-3 rounded-xl bg-secondary/50 mb-2">
-        <div className="flex items-baseline justify-between mb-1.5">
-          <span className="text-[11px] text-muted-foreground">成交概率</span>
-          <span className={`text-[24px] font-bold ${probColor}`}>{copilot.dealProbability}%</span>
-        </div>
-        <div className="h-2 bg-muted rounded-full overflow-hidden">
-          <div className={`h-full rounded-full ${probBg} transition-all duration-500`} style={{ width: `${copilot.dealProbability}%` }} />
-        </div>
+      {/* 4 字段 1 行 4 列紧凑横排 */}
+      <div className="grid grid-cols-4 gap-1.5">
+        {cells.map((c, i) => (
+          <div key={i} className="p-1.5 rounded-lg bg-secondary/50 min-w-0" title={c.title}>
+            <div className="text-[9px] text-muted-foreground mb-0.5">{c.label}</div>
+            <div className={`text-[11px] font-semibold truncate ${c.color}`}>{c.value}</div>
+          </div>
+        ))}
       </div>
-
-      {/* 3字段网格 */}
-      <div className="grid grid-cols-1 gap-1.5">
-        <div className="flex items-center gap-2 p-2 rounded-lg bg-secondary/50">
-          <span className="text-[10px] text-muted-foreground w-14">当前阶段</span>
-          <span className="text-[11px] font-semibold flex-1">{copilot.stage}</span>
-        </div>
-        <div className="flex items-center gap-2 p-2 rounded-lg bg-secondary/50">
-          <span className="text-[10px] text-muted-foreground w-14">推荐策略</span>
-          <span className="text-[11px] font-semibold flex-1 text-primary">{copilot.strategy}</span>
-        </div>
-        <div className="flex items-center gap-2 p-2 rounded-lg bg-secondary/50">
-          <span className="text-[10px] text-muted-foreground w-14">下一步</span>
-          <span className="text-[11px] font-semibold flex-1">{copilot.nextAction}</span>
-        </div>
-      </div>
-
-      {/* 风险 + 案例 */}
-      {copilot.riskFlag && (
-        <div className="mt-2 flex items-center gap-1.5 text-[10px] text-rose-600">
-          <AlertTriangle className="w-3 h-3" />
-          <span>风险: {copilot.riskFlag}</span>
-        </div>
-      )}
-      {copilot.recommendedCase && (
-        <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-emerald-600">
-          <CheckCircle2 className="w-3 h-3" />
-          <span>推荐案例: {copilot.recommendedCase}</span>
-        </div>
-      )}
     </div>
   )
 }
@@ -314,8 +347,8 @@ function LeadFormSection() {
   }
 
   return (
-    <div className="p-4 border-b border-border/60">
-      <div className="flex items-center gap-2 mb-3">
+    <div className="p-3 border-b border-border/60">
+      <div className="flex items-center gap-2 mb-2">
         <div className="w-5 h-5 rounded-md bg-amber-500/10 flex items-center justify-center">
           <Tag className="w-3 h-3 text-amber-500" />
         </div>
@@ -324,21 +357,22 @@ function LeadFormSection() {
         <span className="text-[9px] font-mono text-muted-foreground ml-auto">v{lead.version}</span>
       </div>
 
-      <div className="space-y-2.5">
+      {/* 4 字段 1 行 4 列紧凑横排（UI-COMPACT）*/}
+      <div className="grid grid-cols-4 gap-1.5">
         {/* 意向车型 */}
         <motion.div
-          className="rounded-lg p-2"
+          className="rounded-lg p-1.5 min-w-0"
           animate={flash.carModel ? flashTransition : { backgroundColor: 'rgba(0,0,0,0)' }}
         >
-          <Label className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
-            <Car className="w-3 h-3" /> 意向车型
+          <Label className="text-[9px] text-muted-foreground mb-1 flex items-center gap-0.5">
+            <Car className="w-2.5 h-2.5" /> 车型
           </Label>
           <Select
             value={form.carModel || ''}
             onValueChange={v => handleUpdate('carModel', v)}
           >
-            <SelectTrigger className="h-8 text-[11px] w-full" size="sm">
-              <SelectValue placeholder="选择意向车型…" />
+            <SelectTrigger className="h-7 text-[10px] w-full px-1.5" size="sm">
+              <SelectValue placeholder="选择…" />
             </SelectTrigger>
             <SelectContent>
               {CAR_MODELS.map(m => (
@@ -350,18 +384,18 @@ function LeadFormSection() {
 
         {/* 预算范围 */}
         <motion.div
-          className="rounded-lg p-2"
+          className="rounded-lg p-1.5 min-w-0"
           animate={flash.budgetRange ? flashTransition : { backgroundColor: 'rgba(0,0,0,0)' }}
         >
-          <Label className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
-            <Wallet className="w-3 h-3" /> 预算范围
+          <Label className="text-[9px] text-muted-foreground mb-1 flex items-center gap-0.5">
+            <Wallet className="w-2.5 h-2.5" /> 预算
           </Label>
           <Select
             value={form.budgetRange || ''}
             onValueChange={v => handleUpdate('budgetRange', v)}
           >
-            <SelectTrigger className="h-8 text-[11px] w-full" size="sm">
-              <SelectValue placeholder="选择预算范围…" />
+            <SelectTrigger className="h-7 text-[10px] w-full px-1.5" size="sm">
+              <SelectValue placeholder="选择…" />
             </SelectTrigger>
             <SelectContent>
               {BUDGET_RANGES.map(b => (
@@ -371,19 +405,17 @@ function LeadFormSection() {
           </Select>
         </motion.div>
 
-        {/* 情绪状态 Slider 0-100 + emoji */}
+        {/* 情绪状态（紧凑版：emoji + 小 Slider）*/}
         <motion.div
-          className="rounded-lg p-2"
+          className="rounded-lg p-1.5 min-w-0"
           animate={flash.emotionState ? flashTransition : { backgroundColor: 'rgba(0,0,0,0)' }}
         >
-          <div className="flex items-center justify-between mb-1.5">
-            <Label className="text-[10px] text-muted-foreground flex items-center gap-1">
-              <Smile className="w-3 h-3" /> 情绪状态
+          <div className="flex items-center justify-between mb-1">
+            <Label className="text-[9px] text-muted-foreground flex items-center gap-0.5">
+              <Smile className="w-2.5 h-2.5" /> 情绪
             </Label>
-            <span className="text-[11px] font-mono font-semibold tabular-nums">
-              <span className="mr-1">{emotionEmoji(localEmotion)}</span>
-              {localEmotion}
-              <span className="text-[9px] text-muted-foreground ml-1">{emotionLabel(localEmotion)}</span>
+            <span className="text-[10px] font-mono font-semibold tabular-nums">
+              {emotionEmoji(localEmotion)}{localEmotion}
             </span>
           </div>
           <Slider
@@ -395,27 +427,22 @@ function LeadFormSection() {
             onValueCommit={handleEmotionCommit}
             className="w-full"
           />
-          <div className="flex justify-between text-[9px] text-muted-foreground mt-1">
-            <span>😡 愤怒</span>
-            <span>😐 平静</span>
-            <span>🤩 兴奋</span>
-          </div>
         </motion.div>
 
         {/* 家庭情况 */}
         <motion.div
-          className="rounded-lg p-2"
+          className="rounded-lg p-1.5 min-w-0"
           animate={flash.familyStatus ? flashTransition : { backgroundColor: 'rgba(0,0,0,0)' }}
         >
-          <Label className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
-            <Home className="w-3 h-3" /> 家庭情况
+          <Label className="text-[9px] text-muted-foreground mb-1 flex items-center gap-0.5">
+            <Home className="w-2.5 h-2.5" /> 家庭
           </Label>
           <Select
             value={form.familyStatus || ''}
             onValueChange={v => handleUpdate('familyStatus', v)}
           >
-            <SelectTrigger className="h-8 text-[11px] w-full" size="sm">
-              <SelectValue placeholder="选择家庭情况…" />
+            <SelectTrigger className="h-7 text-[10px] w-full px-1.5" size="sm">
+              <SelectValue placeholder="选择…" />
             </SelectTrigger>
             <SelectContent>
               {FAMILY_STATUS.map(f => (
@@ -432,7 +459,7 @@ function LeadFormSection() {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="mt-2 flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 overflow-hidden"
+            className="mt-1.5 flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 overflow-hidden"
           >
             <CheckCircle2 className="w-3 h-3" />
             <span>已回填，版本号 +1 → v{lead.version}</span>
@@ -443,14 +470,14 @@ function LeadFormSection() {
   )
 }
 
-// ─── 成交/流失预测 ───────────────────────────────────────────
+// ─── 成交/流失预测（紧凑版）───────────────────────────────
 function Predictions() {
   const pred = useOpsStore(s => s.predictions)
   if (!pred) return null
 
   return (
-    <div className="p-4 border-b border-border/60">
-      <div className="flex items-center gap-2 mb-3">
+    <div className="p-3 border-b border-border/60">
+      <div className="flex items-center gap-2 mb-2">
         <div className="w-5 h-5 rounded-md bg-purple-500/10 flex items-center justify-center">
           <TrendingUp className="w-3 h-3 text-purple-500" />
         </div>
@@ -458,17 +485,17 @@ function Predictions() {
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <div className="p-2.5 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
+        <div className="p-2 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
           <div className="text-[10px] text-muted-foreground">成交概率</div>
-          <div className="text-[18px] font-bold text-emerald-600 mt-0.5">{pred.dealProbability}%</div>
+          <div className="text-[16px] font-bold text-emerald-600 mt-0.5">{pred.dealProbability}%</div>
         </div>
-        <div className="p-2.5 rounded-xl bg-rose-500/5 border border-rose-500/20">
+        <div className="p-2 rounded-xl bg-rose-500/5 border border-rose-500/20">
           <div className="text-[10px] text-muted-foreground">流失概率</div>
-          <div className="text-[18px] font-bold text-rose-600 mt-0.5">{pred.churnProbability}%</div>
+          <div className="text-[16px] font-bold text-rose-600 mt-0.5">{pred.churnProbability}%</div>
         </div>
       </div>
 
-      <div className="mt-2 space-y-1 text-[11px]">
+      <div className="mt-1.5 space-y-1 text-[10px]">
         <div className="flex items-center justify-between p-1.5 rounded bg-secondary/50">
           <span className="text-muted-foreground">最佳联系时间</span>
           <span className="font-semibold">{pred.bestContactTime}</span>
@@ -482,21 +509,17 @@ function Predictions() {
   )
 }
 
-// ─── 客户记忆 L1-L4 ──────────────────────────────────────────
+// ─── 客户记忆 L1-L4（默认折叠）──────────────────────────────
 function CustomerMemory() {
   const mem = useOpsStore(s => s.customerMemory)
   if (!mem) return null
 
   return (
-    <div className="p-4 border-b border-border/60">
-      <div className="flex items-center gap-2 mb-3">
-        <div className="w-5 h-5 rounded-md bg-sky-500/10 flex items-center justify-center">
-          <Eye className="w-3 h-3 text-sky-500" />
-        </div>
-        <h3 className="text-[12px] font-semibold">客户记忆</h3>
-        <span className="text-[9px] text-muted-foreground ml-auto">4层引擎</span>
-      </div>
-
+    <CollapsibleSection
+      icon={<Eye className="w-3 h-3 text-sky-500" />}
+      title="客户记忆"
+      badge={<span className="text-[9px] text-muted-foreground">4层引擎</span>}
+    >
       {/* L1 短期记忆 */}
       <div className="mb-2">
         <div className="text-[10px] text-muted-foreground mb-1">L1 短期（最近{mem.l1_short.length}条）</div>
@@ -550,7 +573,7 @@ function CustomerMemory() {
           ))}
         </div>
       )}
-    </div>
+    </CollapsibleSection>
   )
 }
 
@@ -568,9 +591,9 @@ function StressMonitorPanel() {
   return (
     <div className="shrink-0 border-b border-border/60 bg-card">
       {/* 头部条 */}
-      <div className="px-3 py-2 flex items-center gap-2">
+      <div className="px-3 py-1.5 flex items-center gap-2">
         <div className={`w-2 h-2 rounded-full ${sm.running ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground/30'}`} />
-        <span className="text-[11px] font-semibold">压测监控</span>
+        <span className="text-[10px] font-semibold">压测监控</span>
         {sm.running && (
           <span className="text-[9px] font-mono text-muted-foreground">
             第{sm.currentRound}轮 · {durationMin}分钟 · 每{intervalMin}分钟
@@ -593,7 +616,7 @@ function StressMonitorPanel() {
 
       {/* 统计行（始终显示） */}
       {sm.currentRound > 0 && (
-        <div className="px-3 pb-2 flex items-center gap-3 text-[10px] font-mono">
+        <div className="px-3 pb-1.5 flex items-center gap-3 text-[10px] font-mono">
           <span className="text-emerald-600">✅{sm.totalPass}</span>
           <span className={sm.totalFail > 0 ? 'text-rose-600' : 'text-muted-foreground'}>❌{sm.totalFail}</span>
           <span className="text-amber-600">⚠️{sm.totalWarn}</span>
@@ -667,7 +690,7 @@ function StressMonitorPanel() {
   )
 }
 
-// ─── 客户头部 ────────────────────────────────────────────────
+// ─── 客户头部（紧凑版：p-4 → p-3，意向分/标签同栏）─────────
 function LeadHeader() {
   const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
   if (!lead) return null
@@ -675,63 +698,57 @@ function LeadHeader() {
   const isHot = lead.stage === 'hot'
   const isConverted = lead.stage === 'converted'
 
+  // 英文标签翻译成中文
+  const tagMap: Record<string, string> = {
+    'high_intent': '意向高',
+    'price_sensitive': '价格敏感',
+    'high_value': '高价值',
+    'product_education': '需科普',
+    'referral': '转介绍',
+    'converted': '已成交',
+  }
+
   return (
-    <div className="p-4 border-b border-border/60">
-      <div className="flex items-start gap-3">
+    <div className="p-3 border-b border-border/60">
+      <div className="flex items-start gap-2.5">
         <div
-          className="w-12 h-12 rounded-2xl flex items-center justify-center text-[16px] font-semibold text-white shrink-0 shadow-sm"
+          className="w-10 h-10 rounded-xl flex items-center justify-center text-[14px] font-semibold text-white shrink-0 shadow-sm"
           style={{ background: lead.personaColor || '#86868b' }}
         >
           {lead.userName.slice(0, 1)}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <h2 className="text-[16px] font-semibold truncate">{lead.userName}</h2>
-            {isHot && <Flame className="w-4 h-4 text-rose-500" />}
-            {isConverted && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+            <h2 className="text-[14px] font-semibold truncate">{lead.userName}</h2>
+            {isHot && <Flame className="w-3.5 h-3.5 text-rose-500" />}
+            {isConverted && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
+            <span className={`ml-auto px-1.5 py-0.5 rounded-md text-[10px] font-semibold shrink-0 ${
+              isHot ? 'bg-rose-500/10 text-rose-600' :
+              isConverted ? 'bg-emerald-500/10 text-emerald-600' :
+              lead.stage === 'blocked' ? 'bg-amber-500/10 text-amber-600' :
+              'bg-secondary text-muted-foreground'
+            }`}>
+              {stageLabel(lead.stage)}
+            </span>
           </div>
-          <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground">
+          {/* 意向分 + 标签同一行（紧凑）*/}
+          <div className="flex items-center gap-1.5 mt-1 text-[10px] text-muted-foreground flex-wrap">
             <span>{sourceLabel(lead.source)}</span>
             <span>·</span>
-            <span>意向{lead.priorityScore.toFixed(0)}分</span>
+            <span className="font-semibold text-foreground">意向{lead.priorityScore.toFixed(0)}分</span>
             <span>·</span>
             <span className="flex items-center gap-0.5">
               <Clock className="w-2.5 h-2.5" />
               {timeAgo(lead.lastTouchAt)}
             </span>
+            {lead.tags.map(t => (
+              <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium">
+                #{tagMap[t] || t}
+              </span>
+            ))}
           </div>
         </div>
-        <div className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
-          isHot ? 'bg-rose-500/10 text-rose-600' :
-          isConverted ? 'bg-emerald-500/10 text-emerald-600' :
-          lead.stage === 'blocked' ? 'bg-amber-500/10 text-amber-600' :
-          'bg-secondary text-muted-foreground'
-        }`}>
-          {stageLabel(lead.stage)}
-        </div>
       </div>
-
-      {lead.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mt-3">
-          {lead.tags.map(t => {
-            // 英文标签翻译成中文
-            const tagMap: Record<string, string> = {
-              'high_intent': '意向高',
-              'price_sensitive': '价格敏感',
-              'high_value': '高价值',
-              'product_education': '需科普',
-              'referral': '转介绍',
-              'converted': '已成交',
-            }
-            const label = tagMap[t] || t
-            return (
-              <span key={t} className="text-[10px] px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium">
-                #{label}
-              </span>
-            )
-          })}
-        </div>
-      )}
     </div>
   )
 }
@@ -752,15 +769,11 @@ function WhyDecision() {
   ].filter(r => r.positive)
 
   return (
-    <div className="p-4 border-b border-border/60">
-      <div className="flex items-center gap-2 mb-3">
-        <div className="w-5 h-5 rounded-md bg-primary/10 flex items-center justify-center">
-          <Eye className="w-3 h-3 text-primary" />
-        </div>
-        <h3 className="text-[12px] font-semibold tracking-wide">AI 为什么这么回复？</h3>
-        <span className="text-[10px] text-muted-foreground ml-auto">意向{lead.priorityScore.toFixed(0)}分 · 关键因素</span>
-      </div>
-
+    <CollapsibleSection
+      icon={<Eye className="w-3 h-3 text-primary" />}
+      title="AI 为什么这么回复？"
+      badge={<span className="text-[10px] text-muted-foreground">意向{lead.priorityScore.toFixed(0)}分 · 关键因素</span>}
+    >
       <ul className="space-y-1.5">
         {reasons.length > 0 ? reasons.map((r, i) => (
           <li key={i} className="flex items-center gap-2 text-[12px]">
@@ -782,7 +795,7 @@ function WhyDecision() {
           <span>扣分: {f.penalty.toFixed(1)} {lead.isSpam ? '(广告号)' : lead.alreadyCustomer ? '(已购客户)' : ''}</span>
         </div>
       )}
-    </div>
+    </CollapsibleSection>
   )
 }
 
@@ -803,21 +816,17 @@ function StateMachine() {
   const isBlocked = lead.stage === 'blocked'
 
   return (
-    <div className="p-4 border-b border-border/60">
-      <div className="flex items-center gap-2 mb-3">
-        <div className="w-5 h-5 rounded-md bg-sky-500/10 flex items-center justify-center">
-          <ChevronRight className="w-3 h-3 text-sky-500" />
-        </div>
-        <h3 className="text-[12px] font-semibold tracking-wide">客户阶段</h3>
-        {(isChurned || isBlocked) && (
-          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ml-auto ${
-            isBlocked ? 'bg-amber-500/10 text-amber-600' : 'bg-muted text-muted-foreground'
-          }`}>
-            {isBlocked ? '人工接管' : '已流失'}
-          </span>
-        )}
-      </div>
-
+    <CollapsibleSection
+      icon={<ChevronRight className="w-3 h-3 text-sky-500" />}
+      title="客户阶段"
+      badge={(isChurned || isBlocked) ? (
+        <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+          isBlocked ? 'bg-amber-500/10 text-amber-600' : 'bg-muted text-muted-foreground'
+        }`}>
+          {isBlocked ? '人工接管' : '已流失'}
+        </span>
+      ) : undefined}
+    >
       <div className="flex items-center gap-0.5 overflow-x-auto waos-scrollbar-x">
         {flow.map((s, i) => {
           const isPast = currentIdx > i
@@ -838,7 +847,7 @@ function StateMachine() {
           )
         })}
       </div>
-    </div>
+    </CollapsibleSection>
   )
 }
 
@@ -863,18 +872,23 @@ function PersonaCard() {
   }
 
   return (
-    <div className="p-4 border-b border-border/60">
-      <div className="flex items-center gap-2 mb-3">
-        <div className="w-5 h-5 rounded-md bg-amber-500/10 flex items-center justify-center">
-          <Bot className="w-3 h-3 text-amber-500" />
+    <CollapsibleSection
+      icon={<Bot className="w-3 h-3 text-amber-500" />}
+      title="AI 人设"
+      badge={
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-muted-foreground">成交率 {(persona.cvr * 100).toFixed(0)}%</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); openPersonaEditor(persona.id) }}
+            className="p-1 rounded hover:bg-muted text-muted-foreground"
+            title="编辑人设"
+            aria-label="编辑人设"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+          </button>
         </div>
-        <h3 className="text-[12px] font-semibold tracking-wide">AI 人设</h3>
-        <span className="text-[10px] text-muted-foreground ml-auto">成交率 {(persona.cvr * 100).toFixed(0)}%</span>
-        <button onClick={() => openPersonaEditor(persona.id)} className="p-1 rounded hover:bg-muted text-muted-foreground" title="编辑人设">
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-        </button>
-      </div>
-
+      }
+    >
       <div className="p-3 rounded-xl bg-secondary/50 flex items-center gap-2.5">
         <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${persona.gradient} flex items-center justify-center text-[16px] shrink-0`}>
           {persona.avatar}
@@ -956,7 +970,7 @@ function PersonaCard() {
       <div className="text-[9px] text-muted-foreground mt-1 text-center">
         优化幅度: <span className={persona.optimizationScore >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{persona.optimizationScore >= 0 ? '+' : ''}{persona.optimizationScore.toFixed(1)}</span>
       </div>
-    </div>
+    </CollapsibleSection>
   )
 }
 
@@ -971,8 +985,8 @@ function ReplySuggestions() {
   const persona = personas.find(p => p.id === activePersonaId) || personas[0]
 
   return (
-    <div className="p-4 border-b border-border/60">
-      <div className="flex items-center gap-2 mb-3">
+    <div className="p-3 border-b border-border/60">
+      <div className="flex items-center gap-2 mb-2">
         <div className="w-5 h-5 rounded-md bg-emerald-500/10 flex items-center justify-center">
           <Sparkles className="w-3 h-3 text-emerald-500" />
         </div>
@@ -1002,7 +1016,7 @@ function ReplySuggestions() {
             <button
               key={s.id}
               onClick={() => applySuggestion(s)}
-              className="w-full text-left p-2.5 rounded-lg bg-card border border-border/60 hover:border-primary/40 hover:bg-primary/5 transition-all apple-btn group"
+              className="w-full text-left p-2 rounded-lg bg-card border border-border/60 hover:border-primary/40 hover:bg-primary/5 transition-all apple-btn group"
             >
               <div className="flex items-start gap-1.5">
                 <span className="text-[9px] font-mono text-muted-foreground/60 mt-0.5">{i + 1}</span>
@@ -1020,7 +1034,7 @@ function ReplySuggestions() {
   )
 }
 
-// ─── 快捷动作 ────────────────────────────────────────────────
+// ─── 快捷动作（紧凑版：大按钮 → 一行 4 个小图标按钮组）────────
 function Actions() {
   const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
   const openReplyStudio = useOpsStore(s => s.openReplyStudio)
@@ -1028,44 +1042,49 @@ function Actions() {
   const markRead = useOpsStore(s => s.markRead)
   if (!lead) return null
 
+  const actions = [
+    {
+      label: '回复', shortcut: 'R',
+      icon: <MessageSquare className="w-3.5 h-3.5" />,
+      cls: 'bg-primary text-primary-foreground hover:bg-primary/90',
+      onClick: () => openReplyStudio(lead.id),
+    },
+    {
+      label: '优先', shortcut: 'E',
+      icon: <ArrowUpRight className="w-3.5 h-3.5" />,
+      cls: 'bg-rose-500/10 text-rose-600 hover:bg-rose-500/20',
+      onClick: () => sendClientAction('force_priority', lead.id),
+    },
+    {
+      label: '转人工', shortcut: 'H',
+      icon: <Hand className="w-3.5 h-3.5" />,
+      cls: 'bg-amber-500/10 text-amber-600 hover:bg-amber-500/20',
+      onClick: () => sendClientAction('human_handoff', lead.id),
+    },
+    {
+      label: '完成', shortcut: '␣',
+      icon: <CheckCircle2 className="w-3.5 h-3.5" />,
+      cls: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+      onClick: () => { markRead(lead.id); sendClientAction('mark_done', lead.id) },
+    },
+  ]
+
   return (
-    <div className="p-4">
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={() => openReplyStudio(lead.id)} aria-label="回复"
-          className="flex items-center justify-center gap-1.5 h-10 rounded-xl bg-primary text-primary-foreground text-[12px] font-medium hover:bg-primary/90 active:scale-[0.98] transition-all apple-btn"
-        >
-          <MessageSquare className="w-3.5 h-3.5" />
-          回复
-          <kbd className="text-[8px] px-1 py-px rounded bg-black/20">R</kbd>
-        </button>
-        <button
-          onClick={() => sendClientAction('force_priority', lead.id)} aria-label="优先处理"
-          className="flex items-center justify-center gap-1.5 h-10 rounded-xl bg-rose-500/10 text-rose-600 text-[12px] font-medium hover:bg-rose-500/20 active:scale-[0.98] transition-all apple-btn"
-        >
-          <ArrowUpRight className="w-3.5 h-3.5" />
-          优先处理
-          <kbd className="text-[8px] px-1 py-px rounded bg-rose-500/10">E</kbd>
-        </button>
-        <button
-          onClick={() => sendClientAction('human_handoff', lead.id)} aria-label="转人工"
-          className="flex items-center justify-center gap-1.5 h-10 rounded-xl bg-amber-500/10 text-amber-600 text-[12px] font-medium hover:bg-amber-500/20 active:scale-[0.98] transition-all apple-btn"
-        >
-          <Hand className="w-3.5 h-3.5" />
-          转人工
-          <kbd className="text-[8px] px-1 py-px rounded bg-amber-500/10">H</kbd>
-        </button>
-        <button
-          onClick={() => {
-            markRead(lead.id)
-            sendClientAction('mark_done', lead.id)
-          }}
-          className="flex items-center justify-center gap-1.5 h-10 rounded-xl bg-secondary text-secondary-foreground text-[12px] font-medium hover:bg-secondary/80 active:scale-[0.98] transition-all apple-btn"
-        >
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          完成
-          <kbd className="text-[8px] px-1 py-px rounded bg-background">␣</kbd>
-        </button>
+    <div className="p-3">
+      <div className="flex items-center gap-1.5">
+        {actions.map(a => (
+          <button
+            key={a.label}
+            onClick={a.onClick}
+            aria-label={a.label}
+            title={`${a.label} (${a.shortcut})`}
+            className={`flex-1 flex items-center justify-center gap-1 h-8 rounded-lg text-[11px] font-medium active:scale-[0.98] transition-all apple-btn ${a.cls}`}
+          >
+            {a.icon}
+            <span className="hidden sm:inline">{a.label}</span>
+            <kbd className="text-[8px] px-0.5 py-px rounded bg-black/10 dark:bg-white/10">{a.shortcut}</kbd>
+          </button>
+        ))}
       </div>
     </div>
   )

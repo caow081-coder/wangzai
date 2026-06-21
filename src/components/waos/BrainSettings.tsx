@@ -1,10 +1,20 @@
 'use client'
 
+// AI 大脑统一 Dialog（UI-COMPACT 重构）
+// 合并原"AI 大脑" + ProDrawer 中的"大模型对接"为一个统一面板，分 3 个 tab：
+//   Tab1: 模型配置 — 全部模型 + Cookie 手动编辑 / API Key 配置
+//   Tab2: 逆向登录 — 豆包 / Kimi / 智谱 Cookie 扫码登录（自动识别 + 手动兜底）
+//   Tab3: 测试与统计 — 全部测试 + 降级链 + 各模型验证结果
+
 import { useState, useEffect, useRef } from 'react'
 import { useOpsStore } from '@/store/useOpsStore'
-import { Brain, X, Check, Loader2, AlertCircle, Trash2, Zap, Cookie, Shield, QrCode, RefreshCw, ExternalLink, ScanLine } from 'lucide-react'
+import {
+  Brain, X, Check, Loader2, AlertCircle, Trash2, Zap, Cookie,
+  Shield, QrCode, RefreshCw, ScanLine, Cpu, BarChart3,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
+// ─── 模型清单 ─────────────────────────────────────────────────
 const MODELS = [
   {
     id: 'doubao',
@@ -55,6 +65,14 @@ const MODELS = [
     priority: 5,
     ssoSteps: [],
   },
+] as const
+
+type TabId = 'config' | 'login' | 'test'
+
+const TABS: { id: TabId; label: string; icon: React.ReactNode; desc: string }[] = [
+  { id: 'config', label: '模型配置', icon: <Cpu className="w-3.5 h-3.5" />,  desc: '查看/管理全部模型，手动配置 Cookie' },
+  { id: 'login',  label: '逆向登录', icon: <QrCode className="w-3.5 h-3.5" />, desc: '扫码登录，自动识别 Cookie' },
+  { id: 'test',   label: '测试统计', icon: <BarChart3 className="w-3.5 h-3.5" />, desc: '批量测试 / 查看降级链' },
 ]
 
 export function BrainSettings() {
@@ -64,28 +82,30 @@ export function BrainSettings() {
   const setModelCookie = useOpsStore(s => s.setModelCookie)
   const removeModelCookie = useOpsStore(s => s.removeModelCookie)
 
+  const [tab, setTab] = useState<TabId>('config')
   const [loginModel, setLoginModel] = useState<string | null>(null)
   const [extracting, setExtracting] = useState(false)
   const [verifying, setVerifying] = useState<string | null>(null)
   const [verifyResults, setVerifyResults] = useState<Record<string, { valid: boolean; message: string }>>({})
   const [editingModel, setEditingModel] = useState<string | null>(null)
   const [cookieDraft, setCookieDraft] = useState('')
-  const [iframeKey, setIframeKey] = useState(0)  // 用于刷新 iframe
   const [loginWindowRef, setLoginWindowRef] = useState<Window | null>(null)
   const [checkInterval, setCheckInterval] = useState<NodeJS.Timeout | null>(null)
 
+  // 关闭弹窗时清理所有副作用
   useEffect(() => {
     if (!brainOpen) {
       setLoginModel(null)
       setEditingModel(null)
       setCookieDraft('')
+      setTab('config')
       if (checkInterval) { clearInterval(checkInterval); setCheckInterval(null) }
       if (loginWindowRef && !loginWindowRef.closed) loginWindowRef.close()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brainOpen])
 
-  // 组件卸载时清理所有 interval（防止内存泄漏）
+  // 卸载清理
   useEffect(() => {
     return () => {
       if (checkInterval) clearInterval(checkInterval)
@@ -104,17 +124,14 @@ export function BrainSettings() {
     setLoginModel(modelId)
     setVerifyResults(prev => { const n = { ...prev }; delete n[modelId]; return n })
 
-    // 检测是否在 Electron 桌面客户端中
-    const desktop = (window as any).waosDesktop
+    const desktop = (window as unknown as { waosDesktop?: { isDesktop?: boolean; loginPlatform?: (id: string, url: string) => Promise<{ valid: boolean; cookie?: string; error?: string }> } }).waosDesktop
     if (desktop?.isDesktop && desktop.loginPlatform) {
-      // ─── 桌面端: 全自动流程 ───
       setExtracting(true)
       toast.info(`正在打开 ${model.name} 登录窗口，请在弹出窗口中扫码登录`)
       try {
         const result = await desktop.loginPlatform(modelId, model.loginUrl)
         setExtracting(false)
         if (result.valid && result.cookie) {
-          // 桌面端已自动抓取 Cookie，直接验证并保存
           toast.success(`已自动识别 ${model.name} Cookie，正在验证...`)
           await verifyAndSave(modelId, result.cookie)
         } else {
@@ -127,13 +144,11 @@ export function BrainSettings() {
         setLoginModel(modelId)
       }
     } else {
-      // ─── Web 端: 弹窗 + 用户确认 ───
       const win = window.open(model.loginUrl, '_blank', 'width=1200,height=800,noopener')
       setLoginWindowRef(win)
       toast.info(`已打开 ${model.name} 登录页，请在弹出窗口中扫码/验证码登录`)
       toast.info('登录后请关闭登录窗口，软件会自动检测', { duration: 4000 })
 
-      // 轮询检测窗口关闭
       if (checkInterval) clearInterval(checkInterval)
       const interval = setInterval(() => {
         if (win?.closed) {
@@ -152,7 +167,6 @@ export function BrainSettings() {
     setExtracting(true)
     toast.info(`正在检测 ${MODELS.find(m => m.id === modelId)?.name} 登录状态...`)
     try {
-      // 通过后端代理访问平台首页，后端会捕获 Set-Cookie
       const model = MODELS.find(m => m.id === modelId)!
       const sessionId = `user_${Date.now()}`
       const proxyRes = await fetch(`${model.proxyUrl}?session=${sessionId}`, {
@@ -160,17 +174,12 @@ export function BrainSettings() {
       })
 
       if (proxyRes.ok) {
-        // 代理请求成功，后端可能已经存了 Cookie
-        // 提取 Cookie
         const extractRes = await fetch(`/api/waos/brain/extract?model=${modelId}&session=${sessionId}`)
         const extractData = await extractRes.json()
 
         if (extractData.cookie && extractData.cookie.length > 50) {
-          // 有 Cookie，验证
           await verifyAndSave(modelId, extractData.cookie)
         } else {
-          // 没有通过代理拿到 Cookie（可能登录窗口和软件不同源）
-          // 回退到手动模式
           toast.error('自动识别失败，请用手动模式粘贴 Cookie')
           setLoginModel(modelId)
         }
@@ -203,7 +212,7 @@ export function BrainSettings() {
         setLoginModel(null)
       } else {
         toast.error(`Cookie 无效: ${data.message}`)
-        setLoginModel(modelId)  // 回到手动模式
+        setLoginModel(modelId)
       }
     } catch (e: unknown) {
       setVerifyResults(prev => ({ ...prev, [modelId]: { valid: false, message: (e as Error).message } }))
@@ -220,7 +229,7 @@ export function BrainSettings() {
     setEditingModel(null)
   }
 
-  // ─── 测试对话 ───────────────────────────────────────────────
+  // ─── 测试单个模型 ───────────────────────────────────────────
   const handleTest = async (modelId: string) => {
     setVerifying(modelId)
     try {
@@ -272,9 +281,9 @@ export function BrainSettings() {
             <Brain className="w-5 h-5" />
           </div>
           <div className="flex-1">
-            <h2 className="text-[15px] font-bold">AI 大脑 — 扫码登录自动识别</h2>
+            <h2 className="text-[15px] font-bold">AI 大脑 — 统一管理中心</h2>
             <p className="text-[11px] text-muted-foreground">
-              扫码登录 → 自动识别 Cookie · 已配置 {configuredCount}/5
+              模型配置 / 逆向扫码 / 测试统计 · 已配置 {configuredCount}/5
             </p>
           </div>
           <button
@@ -290,26 +299,28 @@ export function BrainSettings() {
           </button>
         </div>
 
-        {/* 降级链 */}
-        <div className="shrink-0 px-5 py-3 bg-secondary/30 border-b border-border">
-          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-            <span className="font-semibold">降级链:</span>
-            {MODELS.map((m, i) => (
-              <div key={m.id} className="flex items-center gap-1">
-                <span className={`px-1.5 py-0.5 rounded font-medium ${
-                  m.id === 'zai' || modelCookies[m.id]
-                    ? 'bg-emerald-500/15 text-emerald-600'
-                    : 'bg-muted text-muted-foreground'
-                }`}>
-                  {m.emoji} {m.name}
-                </span>
-                {i < MODELS.length - 1 && <span className="text-muted-foreground/50">→</span>}
-              </div>
+        {/* Tab 导航 */}
+        <div className="shrink-0 px-3 pt-3 pb-0 border-b border-border bg-secondary/20">
+          <div className="flex items-center gap-0.5">
+            {TABS.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-t-lg text-[12px] font-medium transition-all border-b-2 -mb-px ${
+                  tab === t.id
+                    ? 'border-primary text-foreground bg-background'
+                    : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                }`}
+                title={t.desc}
+              >
+                {t.icon}
+                {t.label}
+              </button>
             ))}
           </div>
         </div>
 
-        {/* 登录进度弹窗 */}
+        {/* 登录进度弹窗（覆盖在 Tab 之上） */}
         {loginModel && (
           <LoginProgress
             model={MODELS.find(m => m.id === loginModel)!}
@@ -324,98 +335,41 @@ export function BrainSettings() {
           />
         )}
 
-        {/* Model list */}
-        <div className="flex-1 overflow-y-auto waos-scrollbar p-4 space-y-3">
-          {MODELS.map(m => {
-            const hasCookie = m.id === 'zai' || !!modelCookies[m.id]
-            const verifyResult = verifyResults[m.id]
-
-            return (
-              <div key={m.id} className={`rounded-xl border p-3 transition-colors ${
-                hasCookie ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-border bg-card'
-              }`}>
-                <div className="flex items-start gap-3">
-                  <div className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${
-                    hasCookie ? 'bg-emerald-500' : 'bg-muted-foreground/30'
-                  }`} />
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[14px] font-semibold">{m.emoji} {m.name}</span>
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">P{m.priority}</span>
-                      {hasCookie && (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 font-medium flex items-center gap-0.5">
-                          <Check className="w-2.5 h-2.5" /> 已登录
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">{m.desc}</p>
-
-                    {verifyResult && (
-                      <div className={`mt-2 px-2 py-1.5 rounded-lg text-[10px] font-mono ${
-                        verifyResult.valid ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'
-                      }`}>
-                        {verifyResult.message}
-                      </div>
-                    )}
-
-                    {editingModel === m.id && m.id !== 'zai' && (
-                      <div className="mt-2 space-y-2">
-                        <textarea
-                          value={cookieDraft}
-                          onChange={e => setCookieDraft(e.target.value)}
-                          placeholder="粘贴 Cookie (name=value; name=value; ...)"
-                          className="w-full h-20 px-2.5 py-2 rounded-lg bg-background border border-border text-[10px] font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
-                        />
-                        <div className="flex gap-2">
-                          <button onClick={() => handleManualSave(m.id, cookieDraft)} disabled={verifying === m.id}
-                            className="px-3 py-1 rounded-lg bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 disabled:opacity-50 apple-btn flex items-center gap-1">
-                            {verifying === m.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Shield className="w-2.5 h-2.5" />}
-                            验证保存
-                          </button>
-                          <button onClick={() => { setEditingModel(null); setCookieDraft('') }}
-                            className="px-3 py-1 rounded-lg bg-muted text-muted-foreground text-[10px] font-medium hover:bg-muted/70 apple-btn">
-                            取消
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col gap-1.5 shrink-0">
-                    {m.loginUrl && (
-                      <button onClick={() => startLogin(m.id)}
-                        className="px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 apple-btn flex items-center gap-1">
-                        <QrCode className="w-2.5 h-2.5" />
-                        扫码登录
-                      </button>
-                    )}
-                    {m.id !== 'zai' && (
-                      <button onClick={() => { setEditingModel(editingModel === m.id ? null : m.id); setCookieDraft(modelCookies[m.id] || '') }}
-                        className="px-2.5 py-1 rounded-lg bg-secondary text-secondary-foreground text-[10px] font-medium hover:bg-secondary/70 apple-btn flex items-center gap-1">
-                        <Cookie className="w-2.5 h-2.5" />
-                        手动
-                      </button>
-                    )}
-                    {hasCookie && (
-                      <button onClick={() => handleTest(m.id)} disabled={verifying === m.id}
-                        className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 text-[10px] font-medium hover:bg-emerald-500/20 disabled:opacity-50 apple-btn flex items-center gap-1">
-                        {verifying === m.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Zap className="w-2.5 h-2.5" />}
-                        测试
-                      </button>
-                    )}
-                    {hasCookie && m.id !== 'zai' && (
-                      <button onClick={() => { removeModelCookie(m.id); setVerifyResults(prev => { const n = { ...prev }; delete n[m.id]; return n }) }}
-                        className="px-2.5 py-1 rounded-lg bg-rose-500/10 text-rose-600 text-[10px] font-medium hover:bg-rose-500/20 apple-btn flex items-center gap-1">
-                        <Trash2 className="w-2.5 h-2.5" />
-                        清除
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
+        {/* Tab 内容 */}
+        <div className="flex-1 overflow-y-auto waos-scrollbar p-4">
+          {tab === 'config' && (
+            <ConfigTab
+              modelCookies={modelCookies}
+              verifyResults={verifyResults}
+              editingModel={editingModel}
+              cookieDraft={cookieDraft}
+              setEditingModel={setEditingModel}
+              setCookieDraft={setCookieDraft}
+              onManualSave={handleManualSave}
+              onRemove={removeModelCookie}
+              verifying={verifying}
+              onTest={handleTest}
+            />
+          )}
+          {tab === 'login' && (
+            <LoginTab
+              modelCookies={modelCookies}
+              verifyResults={verifyResults}
+              onStartLogin={startLogin}
+              onAutoExtract={autoExtractCookie}
+              loginModel={loginModel}
+              extracting={extracting}
+            />
+          )}
+          {tab === 'test' && (
+            <TestTab
+              modelCookies={modelCookies}
+              verifyResults={verifyResults}
+              verifying={verifying}
+              onTest={handleTest}
+              onTestAll={handleTestAll}
+            />
+          )}
         </div>
 
         {/* Footer */}
@@ -423,8 +377,8 @@ export function BrainSettings() {
           <div className="flex items-start gap-2 text-[10px] text-muted-foreground">
             <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
             <div>
-              <p>点「扫码登录」→ 新窗口登录 → 软件自动识别 Cookie（无需手动复制）</p>
-              <p className="mt-1">如自动识别失败，可点「手动」粘贴 Cookie。AI 大脑限流自动切下一个模型。</p>
+              <p>「逆向登录」: 点扫码 → 新窗口登录 → 软件自动识别 Cookie（无需手动复制）</p>
+              <p className="mt-1">「模型配置」: 手动粘贴 Cookie 或清除；「测试统计」: 批量验证 + 降级链查看</p>
             </div>
           </div>
         </div>
@@ -433,9 +387,283 @@ export function BrainSettings() {
   )
 }
 
-// ─── 登录进度弹窗 ─────────────────────────────────────────────
+// ─── Tab1: 模型配置 ───────────────────────────────────────────
+function ConfigTab({
+  modelCookies, verifyResults, editingModel, cookieDraft,
+  setEditingModel, setCookieDraft, onManualSave, onRemove, verifying, onTest,
+}: {
+  modelCookies: Record<string, string>
+  verifyResults: Record<string, { valid: boolean; message: string }>
+  editingModel: string | null
+  cookieDraft: string
+  setEditingModel: (id: string | null) => void
+  setCookieDraft: (v: string) => void
+  onManualSave: (modelId: string, cookie: string) => void
+  onRemove: (modelId: string) => void
+  verifying: string | null
+  onTest: (modelId: string) => void
+}) {
+  return (
+    <div className="space-y-3">
+      {MODELS.map(m => {
+        const hasCookie = m.id === 'zai' || !!modelCookies[m.id]
+        const verifyResult = verifyResults[m.id]
+        return (
+          <div key={m.id} className={`rounded-xl border p-3 transition-colors ${
+            hasCookie ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-border bg-card'
+          }`}>
+            <div className="flex items-start gap-3">
+              <div className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${
+                hasCookie ? 'bg-emerald-500' : 'bg-muted-foreground/30'
+              }`} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[14px] font-semibold">{m.emoji} {m.name}</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">P{m.priority}</span>
+                  {hasCookie && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 font-medium flex items-center gap-0.5">
+                      <Check className="w-2.5 h-2.5" /> 已配置
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{m.desc}</p>
+
+                {verifyResult && (
+                  <div className={`mt-2 px-2 py-1.5 rounded-lg text-[10px] font-mono ${
+                    verifyResult.valid ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'
+                  }`}>
+                    {verifyResult.message}
+                  </div>
+                )}
+
+                {editingModel === m.id && m.id !== 'zai' && (
+                  <div className="mt-2 space-y-2">
+                    <textarea
+                      value={cookieDraft}
+                      onChange={e => setCookieDraft(e.target.value)}
+                      placeholder="粘贴 Cookie (name=value; name=value; ...)"
+                      className="w-full h-20 px-2.5 py-2 rounded-lg bg-background border border-border text-[10px] font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                    <div className="flex gap-2">
+                      <button onClick={() => onManualSave(m.id, cookieDraft)} disabled={verifying === m.id}
+                        className="px-3 py-1 rounded-lg bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 disabled:opacity-50 apple-btn flex items-center gap-1">
+                        {verifying === m.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Shield className="w-2.5 h-2.5" />}
+                        验证保存
+                      </button>
+                      <button onClick={() => { setEditingModel(null); setCookieDraft('') }}
+                        className="px-3 py-1 rounded-lg bg-muted text-muted-foreground text-[10px] font-medium hover:bg-muted/70 apple-btn">
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5 shrink-0">
+                {m.id !== 'zai' && (
+                  <button
+                    onClick={() => { setEditingModel(editingModel === m.id ? null : m.id); setCookieDraft(modelCookies[m.id] || '') }}
+                    className="px-2.5 py-1 rounded-lg bg-secondary text-secondary-foreground text-[10px] font-medium hover:bg-secondary/70 apple-btn flex items-center gap-1"
+                  >
+                    <Cookie className="w-2.5 h-2.5" />
+                    {hasCookie ? '改' : '手动'}
+                  </button>
+                )}
+                {hasCookie && (
+                  <button onClick={() => onTest(m.id)} disabled={verifying === m.id}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 text-[10px] font-medium hover:bg-emerald-500/20 disabled:opacity-50 apple-btn flex items-center gap-1">
+                    {verifying === m.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Zap className="w-2.5 h-2.5" />}
+                    测试
+                  </button>
+                )}
+                {hasCookie && m.id !== 'zai' && (
+                  <button
+                    onClick={() => { onRemove(m.id); setVerifyResults(prev => { const n = { ...prev }; delete n[m.id]; return n }) }}
+                    className="px-2.5 py-1 rounded-lg bg-rose-500/10 text-rose-600 text-[10px] font-medium hover:bg-rose-500/20 apple-btn flex items-center gap-1"
+                  >
+                    <Trash2 className="w-2.5 h-2.5" />
+                    清除
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Tab2: 逆向登录 ──────────────────────────────────────────
+function LoginTab({
+  modelCookies, verifyResults, onStartLogin, onAutoExtract, loginModel, extracting,
+}: {
+  modelCookies: Record<string, string>
+  verifyResults: Record<string, { valid: boolean; message: string }>
+  onStartLogin: (modelId: string) => void
+  onAutoExtract: (modelId: string) => void
+  loginModel: string | null
+  extracting: boolean
+}) {
+  const loginModels = MODELS.filter(m => m.loginUrl)
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 p-3 flex items-start gap-2">
+        <ScanLine className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+        <div className="text-[11px] text-muted-foreground">
+          <p className="text-foreground font-medium mb-0.5">逆向登录流程</p>
+          点击「扫码登录」→ 在弹出窗口扫码/验证码登录 → 软件自动识别 Cookie。
+          桌面客户端全自动，Web 端如自动识别失败可回退手动模式（见「模型配置」tab）。
+        </div>
+      </div>
+
+      {loginModels.map(m => {
+        const hasCookie = !!modelCookies[m.id]
+        const verifyResult = verifyResults[m.id]
+        const isActive = loginModel === m.id
+        return (
+          <div key={m.id} className={`rounded-xl border p-3 transition-colors ${
+            hasCookie ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-border bg-card'
+          }`}>
+            <div className="flex items-center gap-3">
+              <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                hasCookie ? 'bg-emerald-500' : 'bg-muted-foreground/30'
+              }`} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[14px] font-semibold">{m.emoji} {m.name}</span>
+                  {hasCookie && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 font-medium flex items-center gap-0.5">
+                      <Check className="w-2.5 h-2.5" /> 已登录
+                    </span>
+                  )}
+                  {isActive && extracting && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-medium flex items-center gap-0.5">
+                      <Loader2 className="w-2.5 h-2.5 animate-spin" /> 识别中
+                    </span>
+                  )}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{m.desc} · 优先级 P{m.priority}</p>
+                {verifyResult && (
+                  <div className={`mt-1.5 px-2 py-1 rounded-lg text-[10px] font-mono ${
+                    verifyResult.valid ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'
+                  }`}>
+                    {verifyResult.message}
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5 shrink-0">
+                <button
+                  onClick={() => onStartLogin(m.id)}
+                  className="px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 apple-btn flex items-center gap-1"
+                >
+                  <QrCode className="w-2.5 h-2.5" />
+                  扫码登录
+                </button>
+                <button
+                  onClick={() => onAutoExtract(m.id)}
+                  disabled={extracting}
+                  className="px-2.5 py-1 rounded-lg bg-secondary text-secondary-foreground text-[10px] font-medium hover:bg-secondary/70 disabled:opacity-50 apple-btn flex items-center gap-1"
+                >
+                  <RefreshCw className={`w-2.5 h-2.5 ${extracting ? 'animate-spin' : ''}`} />
+                  自动检测
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Tab3: 测试与统计 ─────────────────────────────────────────
+function TestTab({
+  modelCookies, verifyResults, verifying, onTest, onTestAll,
+}: {
+  modelCookies: Record<string, string>
+  verifyResults: Record<string, { valid: boolean; message: string }>
+  verifying: string | null
+  onTest: (modelId: string) => void
+  onTestAll: () => void
+}) {
+  return (
+    <div className="space-y-4">
+      {/* 降级链总览 */}
+      <div className="rounded-xl bg-secondary/30 border border-border p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <BarChart3 className="w-3.5 h-3.5 text-primary" />
+          <h3 className="text-[12px] font-semibold">降级链（按优先级）</h3>
+        </div>
+        <div className="flex items-center gap-1 flex-wrap text-[10px]">
+          {MODELS.map((m, i) => {
+            const ok = m.id === 'zai' || !!modelCookies[m.id]
+            return (
+              <div key={m.id} className="flex items-center gap-1">
+                <span className={`px-1.5 py-0.5 rounded font-medium ${
+                  ok ? 'bg-emerald-500/15 text-emerald-600' : 'bg-muted text-muted-foreground'
+                }`}>
+                  {m.emoji} {m.name}
+                </span>
+                {i < MODELS.length - 1 && <span className="text-muted-foreground/50">→</span>}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* 一键测试 */}
+      <button
+        onClick={onTestAll}
+        disabled={verifying === 'all'}
+        className="w-full px-3 py-2.5 rounded-xl bg-primary text-primary-foreground text-[12px] font-medium hover:bg-primary/90 disabled:opacity-50 apple-btn flex items-center justify-center gap-1.5"
+      >
+        {verifying === 'all' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+        {verifying === 'all' ? '正在测试...' : '一键测试所有已配置模型'}
+      </button>
+
+      {/* 单模型测试结果 */}
+      <div className="space-y-2">
+        <div className="text-[10px] font-semibold text-muted-foreground uppercase">单模型测试</div>
+        {MODELS.map(m => {
+          const hasCookie = m.id === 'zai' || !!modelCookies[m.id]
+          const result = verifyResults[m.id]
+          return (
+            <div key={m.id} className="flex items-center gap-2 p-2 rounded-lg border border-border bg-card">
+              <span className="text-[14px]">{m.emoji}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px] font-medium">{m.name}</div>
+                {result ? (
+                  <div className={`text-[10px] font-mono truncate ${
+                    result.valid ? 'text-emerald-600' : 'text-rose-600'
+                  }`}>
+                    {result.message}
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-muted-foreground">
+                    {hasCookie ? '已配置，未测试' : '未配置'}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => onTest(m.id)}
+                disabled={!hasCookie || verifying === m.id || verifying === 'all'}
+                className="px-2.5 py-1 rounded-lg bg-secondary text-secondary-foreground text-[10px] font-medium hover:bg-secondary/70 disabled:opacity-50 apple-btn flex items-center gap-1"
+              >
+                {verifying === m.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Zap className="w-2.5 h-2.5" />}
+                测试
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── 登录进度弹窗（覆盖层） ──────────────────────────────────
 function LoginProgress({ model, extracting, verifying, verifyResult, cookieDraft, setCookieDraft, onManualSave, onRetry, onCancel }: {
-  model: typeof MODELS[0]
+  model: typeof MODELS[number]
   extracting: boolean
   verifying: boolean
   verifyResult?: { valid: boolean; message: string }
@@ -479,7 +707,6 @@ function LoginProgress({ model, extracting, verifying, verifyResult, cookieDraft
           </div>
         ) : (
           <div className="space-y-4">
-            {/* 登录指南 */}
             <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 p-4">
               <div className="flex items-center gap-2 mb-3">
                 <ScanLine className="w-4 h-4 text-emerald-600" />

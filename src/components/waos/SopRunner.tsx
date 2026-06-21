@@ -542,17 +542,19 @@ export function SopInstanceCard() {
   }
 
   if (!lead) return null
-  if (instances.length === 0) return null
+  // UI-COMPACT: 仅展示活动实例（running / paused），已完成/失败的实例通过事件流查看
+  const activeInstances = instances.filter(i => i.status === 'running' || i.status === 'paused')
+  if (activeInstances.length === 0) return null
 
   // 排序：running 优先，其次按 updatedAt 倒序
-  const sorted = [...instances].sort((a, b) => {
+  const sorted = [...activeInstances].sort((a, b) => {
     const order: Record<string, number> = { running: 0, paused: 1, failed: 2, aborted: 3, completed: 4 }
     return (order[a.status] ?? 5) - (order[b.status] ?? 5) || b.updatedAt - a.updatedAt
   })
 
   return (
-    <div className="p-4 border-b border-border/60">
-      <div className="flex items-center gap-2 mb-3">
+    <div className="p-3 border-b border-border/60">
+      <div className="flex items-center gap-2 mb-2">
         <div className="w-5 h-5 rounded-md bg-violet-500/10 flex items-center justify-center">
           <Bot className="w-3 h-3 text-violet-500" />
         </div>

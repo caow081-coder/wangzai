@@ -176,6 +176,60 @@ export interface Persona {
   // 角色类型
   role: 'sales' | 'service' | 'expert' | 'lifestyle' | 'custom' | 'marketing' | 'bd'
   specialties: string[]
+
+  // ─── 新增：业务能力配置（销售什么汽车、车型类型、价格区间等）─────────
+  business: {
+    /** 销售哪些车型（多选，如 ['C级','GLC','GLE','E级','S级','GLC Coupe','EQE','迈巴赫','AMG']） */
+    carModels: string[]
+    /** 车型类型专长（轿车/SUV/新能源/性能车/旗舰/MPV） */
+    carTypes: string[]
+    /** 价格区间（万元），如 { min: 30, max: 80 } */
+    priceRange: { min: number; max: number }
+    /** 主推车型（展示用，必须包含在 carModels 内） */
+    primaryModel: string
+  }
+
+  // ─── 新增：联系方式（可主动发给客户）─────────
+  contact: {
+    /** 电话 */
+    phone?: string
+    /** 微信号 */
+    wechat?: string
+    /** 门店名称 */
+    storeName?: string
+    /** 门店地址 */
+    storeAddress?: string
+    /** 营业时间 */
+    businessHours?: string
+    /** 城市/区域 */
+    location?: string
+  }
+
+  // ─── 新增：技能系统（可配置，非死字符串）─────────
+  skillConfig: {
+    /** 已启用技能 ID 列表（引用 Skill registry，对应 src/lib/sop/skills.ts 的 9 个 Skill） */
+    enabledSkills: string[]
+    /** 每个技能的自定义参数（覆盖默认） */
+    skillParams: Record<string, Record<string, unknown>>
+    /** 推荐 SOP 模板 ID 列表（选人设时一键启用推荐配置） */
+    recommendedSops: string[]
+    /** 已启用的 SOP 模板 ID（人设专属，运行时只跑这些 SOP） */
+    enabledSops: string[]
+  }
+
+  // ─── 新增：风格延伸（可修改的话术风格）─────────
+  styleExtends: {
+    /** 开场白模板（多条，AI 可随机/智能选取） */
+    greetingTemplates: string[]
+    /** 逼单话术模板 */
+    closingTemplates: string[]
+    /** 安抚话术模板 */
+    comfortTemplates: string[]
+    /** 禁用词（该人设不会说的话） */
+    bannedPhrases: string[]
+    /** 常用 emoji */
+    frequentEmojis: string[]
+  }
 }
 
 // 大模型对接配置
@@ -369,7 +423,7 @@ interface OpsState {
   clientTyping: boolean  // show "对方正在输入..." animation
   clientDraft: string
   clientSending: boolean
-  clientTab: 'chat' | 'moments' | 'contacts' | 'intercept' | 'sop'  // 微信客户端内部 tab: 聊天/朋友圈/通讯录/截流/SOP引擎
+  clientTab: 'chat' | 'moments' | 'contacts' | 'intercept' | 'sop' | 'favorites' | 'channels' | 'miniprogram'  // 微信客户端内部 tab（对齐真实PC微信导航）
 
   // 防双端打架：人工接管警告横幅（10 秒静默窗口期内 AI 暂停回复）
   takeoverWarning: TakeoverWarning | null
@@ -658,6 +712,28 @@ interface OpsState {
   deletePersona: (personaId: string) => void
   autoOptimizePersona: (personaId: string) => Promise<void>
 
+  // ─── 人设系统深度重构：业务/联系/技能/SOP/风格 CRUD ──────────────
+  /** 更新人设业务配置（车型/类型/价格/主推） */
+  updatePersonaBusiness: (id: string, business: Partial<Persona['business']>) => void
+  /** 更新人设联系方式（电话/微信/门店等） */
+  updatePersonaContact: (id: string, contact: Partial<Persona['contact']>) => void
+  /** 启用/禁用某项技能 */
+  togglePersonaSkill: (id: string, skillId: string) => void
+  /** 启用/禁用某个 SOP 模板 */
+  togglePersonaSop: (id: string, sopId: string) => void
+  /** 更新话术风格模板（开场/逼单/安抚/禁用词/emoji） */
+  updatePersonaStyle: (id: string, style: Partial<Persona['styleExtends']>) => void
+  /** 创建新人设（基于模板或空白） */
+  createPersona: (template?: Partial<Persona>) => string
+  /** 复制人设（深拷贝，id 重新生成） */
+  duplicatePersona: (id: string) => void
+  /** 一键启用推荐 SOP（把 recommendedSops 全部加入 enabledSops） */
+  applyRecommendedSops: (id: string) => void
+  /** 持久化人设列表到 localStorage */
+  persistPersonas: () => void
+  /** 从 localStorage 恢复人设列表 */
+  hydratePersonas: () => void
+
   // 大模型 Provider
   setActiveProvider: (providerId: string) => void
   addProvider: (provider: LLMProvider) => void
@@ -823,6 +899,83 @@ const SEED_LEADS: Lead[] = [
     ],
   },
 ]
+
+// ─── 人设业务上下文 system prompt 构建器 ──────────────────────────
+// 把 persona.business / contact / styleExtends / skillConfig 注入成
+// 一段 system 消息，让 AI 大脑回答客户关于"卖什么车/价格/门店地址/联系方式"
+// 时能直接引用准确数据，而不是凭空编造。
+//
+// 调用点：sendClientMessage → /api/waos/brain 的 messages 数组首位插入此 system。
+export function buildPersonaContextPrompt(persona: Persona): string {
+  const parts: string[] = []
+
+  // 1. 角色身份与基础描述
+  parts.push(`你是${persona.name}，${persona.description}。`)
+  if (persona.systemPrompt) {
+    parts.push(persona.systemPrompt)
+  }
+
+  // 2. 业务能力：销售车型 / 类型 / 价格区间 / 主推
+  const b = persona.business
+  if (b) {
+    if (b.carModels?.length) {
+      parts.push(`你销售的车型：${b.carModels.join('、')}${b.primaryModel ? `，主推 ${b.primaryModel}` : ''}。`)
+    }
+    if (b.carTypes?.length) {
+      parts.push(`车型类型专长：${b.carTypes.join('、')}。`)
+    }
+    if (typeof b.priceRange?.min === 'number' && typeof b.priceRange?.max === 'number') {
+      parts.push(`价格区间：${b.priceRange.min}-${b.priceRange.max} 万元。`)
+    }
+  }
+
+  // 3. 联系方式：电话 / 微信 / 门店 / 营业时间
+  const c = persona.contact
+  if (c) {
+    const contactLines: string[] = []
+    if (c.phone) contactLines.push(`电话 ${c.phone}`)
+    if (c.wechat) contactLines.push(`微信 ${c.wechat}`)
+    if (c.storeName) contactLines.push(`门店 ${c.storeName}`)
+    if (c.storeAddress) contactLines.push(`地址 ${c.storeAddress}`)
+    if (c.businessHours) contactLines.push(`营业时间 ${c.businessHours}`)
+    if (c.location) contactLines.push(`所在地 ${c.location}`)
+    if (contactLines.length) {
+      parts.push(`联系方式（当客户询问价格/地址/联系方式时直接给出）：${contactLines.join('，')}。`)
+    }
+  }
+
+  // 4. 话术风格模板：开场/逼单/安抚（AI 可智能选取并替换 {primaryModel} 占位）
+  const s = persona.styleExtends
+  if (s) {
+    const pm = b?.primaryModel || '奔驰'
+    if (s.greetingTemplates?.length) {
+      parts.push(`开场白参考（{primaryModel} 替换为「${pm}」）：\n- ${s.greetingTemplates.map(t => t.replace(/\{primaryModel\}/g, pm)).join('\n- ')}`)
+    }
+    if (s.closingTemplates?.length) {
+      parts.push(`逼单话术参考：\n- ${s.closingTemplates.map(t => t.replace(/\{primaryModel\}/g, pm)).join('\n- ')}`)
+    }
+    if (s.comfortTemplates?.length) {
+      parts.push(`安抚话术参考：\n- ${s.comfortTemplates.map(t => t.replace(/\{primaryModel\}/g, pm)).join('\n- ')}`)
+    }
+    if (s.bannedPhrases?.length) {
+      parts.push(`禁用词（绝对不能说）：${s.bannedPhrases.join('、')}。`)
+    }
+    if (s.frequentEmojis?.length) {
+      parts.push(`常用 emoji（可适当使用）：${s.frequentEmojis.join(' ')}`)
+    }
+  }
+
+  // 5. 已启用 SOP（提示 AI 当前流程上下文，可选）
+  const sc = persona.skillConfig
+  if (sc?.enabledSops?.length) {
+    parts.push(`当前已启用 SOP 流程：${sc.enabledSops.join('、')}。回复时请遵循该流程的节奏（如逼单/安抚/唤醒）。`)
+  }
+
+  // 6. 行为约束收尾
+  parts.push(`当客户询问价格/地址/联系方式/车型时，必须直接引用上述真实数据，不要编造。回复保持简洁、贴合人设风格，避免冗长。`)
+
+  return parts.join('\n')
+}
 
 export const useOpsStore = create<OpsState>((set, get) => ({
   leads: SEED_LEADS,
@@ -1094,6 +1247,49 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       ],
       autoOptimize: true, optimizationScore: 15.2,
       role: 'sales', specialties: ['奔驰全系', '试驾转化', '金融方案'],
+      // ─── 业务能力：销冠主销中端豪华车系 ───
+      business: {
+        carModels: ['C级', 'GLC', 'GLE', 'E级'],
+        carTypes: ['轿车', 'SUV'],
+        priceRange: { min: 30, max: 80 },
+        primaryModel: 'GLC',
+      },
+      // ─── 联系方式 ───
+      contact: {
+        phone: '138-8888-8888',
+        wechat: 'suan8888',
+        storeName: '北京奔驰 · 朝阳旗舰4S中心',
+        storeAddress: '北京市朝阳区东四环中路18号奔驰4S中心',
+        businessHours: '9:00-21:00（全年无休）',
+        location: '北京 · 朝阳',
+      },
+      // ─── 技能与 SOP 配置（销冠全流程覆盖） ───
+      skillConfig: {
+        enabledSkills: ['intent_recognition', 'value_evaluation', 'strategy_select', 'reply_generate', 'crm_update', 'send_message', 'schedule_followup', 'knowledge_search'],
+        skillParams: {
+          strategy_select: { strategy: 'CLOSE_NOW' },
+          reply_generate: { tone: 'friendly_professional' },
+        },
+        recommendedSops: ['high_intent_close', 'new_customer_welcome'],
+        enabledSops: ['high_intent_close', 'new_customer_welcome'],
+      },
+      // ─── 话术风格延伸 ───
+      styleExtends: {
+        greetingTemplates: [
+          '您好呀～我是奔驰苏念安，您可以叫我念安。看到您在看{primaryModel}，方便简单聊聊您的需求吗？',
+          '哈喽～欢迎咨询奔驰！我是念安，{primaryModel}这车性价比挺高的，您主要家用还是商务？',
+        ],
+        closingTemplates: [
+          '这个价格我帮您去找经理申请一下，您看今天方便过来定吗？我帮您锁车。',
+          '这周末有空吗？我帮您安排一次试驾，开过才知道适不适合您。',
+        ],
+        comfortTemplates: [
+          '理解您的顾虑，买车确实要慎重。我们慢慢聊，您有什么疑问随时问我。',
+          '没关系，您多对比是应该的。我帮您梳理下我们和别家的差异，您参考下。',
+        ],
+        bannedPhrases: ['便宜', '打折', '清仓', '甩卖', '最低价'],
+        frequentEmojis: ['🙂', '🚗', '✨', '💪'],
+      },
     },
     {
       id: 'closer',
@@ -1117,6 +1313,49 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       ],
       autoOptimize: true, optimizationScore: 22.5,
       role: 'sales', specialties: ['限时逼单', '现车稀缺', '签约推进'],
+      // ─── 业务能力：逼单主销高端旗舰车系 ───
+      business: {
+        carModels: ['S级', '迈巴赫', 'AMG'],
+        carTypes: ['旗舰', '性能车', '轿车'],
+        priceRange: { min: 80, max: 200 },
+        primaryModel: 'S级',
+      },
+      // ─── 联系方式（高端门店） ───
+      contact: {
+        phone: '139-9999-9999',
+        wechat: 'guqc8888',
+        storeName: '北京奔驰 · 国贸尊享体验中心',
+        storeAddress: '北京市朝阳区建国门外大街1号国贸三期B1奔驰尊享店',
+        businessHours: '10:00-22:00（需预约）',
+        location: '北京 · 国贸',
+      },
+      // ─── 技能与 SOP 配置（逼单专精） ───
+      skillConfig: {
+        enabledSkills: ['intent_recognition', 'value_evaluation', 'strategy_select', 'reply_generate', 'crm_update', 'send_message', 'schedule_followup'],
+        skillParams: {
+          strategy_select: { strategy: 'CLOSE_NOW' },
+          reply_generate: { tone: 'urgent_close' },
+        },
+        recommendedSops: ['high_intent_close', 'campaign_notify'],
+        enabledSops: ['high_intent_close'],
+      },
+      // ─── 话术风格延伸 ───
+      styleExtends: {
+        greetingTemplates: [
+          '您好，{primaryModel}这个月有专属金融贴息政策，名额有限，今天给您说下。',
+          '直接说重点，{primaryModel}现车就剩 1 台，您要订我就给您锁。',
+        ],
+        closingTemplates: [
+          '这台黑色{primaryModel}就剩最后一台了，昨天还有两组客户在看，您看今天能定吗？',
+          '金融贴息政策月底截止，今天锁名额最划算，错过就等下个月了。',
+        ],
+        comfortTemplates: [
+          '理解您要再考虑，不过这台现车真的就剩这一台，我先帮您保留 24 小时。',
+          '没关系，您可以再想想，但政策确实月底截止，建议您抓紧。',
+        ],
+        bannedPhrases: ['便宜', '打折', '清仓', '随便看看'],
+        frequentEmojis: ['🔥', '⏰', '🚨', '✍️'],
+      },
     },
     {
       id: 'service',
@@ -1140,6 +1379,49 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       ],
       autoOptimize: true, optimizationScore: 8.3,
       role: 'service', specialties: ['保养维护', '问题处理', '转介绍'],
+      // ─── 业务能力：售后全系车型维护 ───
+      business: {
+        carModels: ['C级', 'GLC', 'GLE', 'E级', 'S级', 'GLC Coupe', 'EQE', '迈巴赫', 'AMG'],
+        carTypes: ['轿车', 'SUV', '新能源', '性能车', '旗舰', 'MPV'],
+        priceRange: { min: 30, max: 200 },
+        primaryModel: 'C级',
+      },
+      // ─── 联系方式（售后服务中心） ───
+      contact: {
+        phone: '400-888-6666',
+        wechat: 'service-yzq',
+        storeName: '北京奔驰 · 售后服务中心',
+        storeAddress: '北京市朝阳区东四环中路18号奔驰4S中心售后楼',
+        businessHours: '8:30-18:00（周一至周日）',
+        location: '北京 · 朝阳',
+      },
+      // ─── 技能与 SOP 配置（售后专精） ───
+      skillConfig: {
+        enabledSkills: ['intent_recognition', 'reply_generate', 'crm_update', 'send_message', 'schedule_followup', 'human_handoff', 'knowledge_search'],
+        skillParams: {
+          strategy_select: { strategy: 'SOFT_RECOVERY' },
+          reply_generate: { tone: 'patient_warm' },
+        },
+        recommendedSops: ['after_sales_followup', 'complaint_handle'],
+        enabledSops: ['after_sales_followup'],
+      },
+      // ─── 话术风格延伸 ───
+      styleExtends: {
+        greetingTemplates: [
+          '您好，我是您的售后管家叶之秋，最近用车还顺手吗？有任何问题随时联系我～',
+          '您好呀，您的{primaryModel}该做保养了，我帮您预约个时间？',
+        ],
+        closingTemplates: [
+          '已经帮您预约好了，到店直接找我即可，期待您的光临～',
+          '老客户转介绍有专属礼遇，身边有朋友看车可以帮您引荐哦～',
+        ],
+        comfortTemplates: [
+          '非常抱歉给您带来不便，我马上帮您协调处理，请稍等。',
+          '您的心情我能理解，我们一定会妥善解决这个问题，请您放心。',
+        ],
+        bannedPhrases: ['不归我管', '不知道', '自己问别人', '下班了'],
+        frequentEmojis: ['💙', '🤝', '🔧', '⭐'],
+      },
     },
     {
       id: 'content_ops',
@@ -1163,6 +1445,49 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       ],
       autoOptimize: true, optimizationScore: 18.7,
       role: 'marketing', specialties: ['短视频运营', '评论截流', '私信转化'],
+      // ─── 业务能力：运营覆盖全系车型内容 ───
+      business: {
+        carModels: ['C级', 'GLC', 'GLE', 'E级', 'S级', 'EQE'],
+        carTypes: ['轿车', 'SUV', '新能源'],
+        priceRange: { min: 30, max: 120 },
+        primaryModel: 'GLE',
+      },
+      // ─── 联系方式（线上运营为主） ───
+      contact: {
+        phone: '186-6666-6666',
+        wechat: 'cmb-video',
+        storeName: '奔驰 · 数字营销中心',
+        storeAddress: '线上运营（不定期直播/试驾活动）',
+        businessHours: '在线时间 9:00-23:00',
+        location: '线上',
+      },
+      // ─── 技能与 SOP 配置（裂变引流专精） ───
+      skillConfig: {
+        enabledSkills: ['intent_recognition', 'reply_generate', 'crm_update', 'send_message', 'knowledge_search'],
+        skillParams: {
+          strategy_select: { strategy: 'RECONNECT_HOOK' },
+          reply_generate: { tone: 'young_hook' },
+        },
+        recommendedSops: ['referral_fission', 'campaign_notify'],
+        enabledSops: ['referral_fission', 'campaign_notify'],
+      },
+      // ─── 话术风格延伸 ───
+      styleExtends: {
+        greetingTemplates: [
+          '哈喽～看您对{primaryModel}很感兴趣，私信我发您独家优惠和现车视频～',
+          '嗨～刚拍了台{primaryModel}现车视频，内饰绝了，私信发您看看？',
+        ],
+        closingTemplates: [
+          '这周末有试驾活动，名额有限，私信发您预约链接～',
+          '老粉专属购车礼遇，私信我了解详情～',
+        ],
+        comfortTemplates: [
+          '感谢关注！我们会持续输出优质内容，您有什么想看的车型可以告诉我～',
+          '不好意思让您久等了，您要的资料我马上整理给您～',
+        ],
+        bannedPhrases: ['便宜', '打折', '最低价', '清仓'],
+        frequentEmojis: ['🎬', '🔥', '✨', '💖'],
+      },
     },
     {
       id: 'market_dev',
@@ -1186,6 +1511,49 @@ export const useOpsStore = create<OpsState>((set, get) => ({
       ],
       autoOptimize: true, optimizationScore: 12.0,
       role: 'bd', specialties: ['企业客户', '异业合作', '沉睡激活'],
+      // ─── 业务能力：BD 覆盖旗舰/MPV 高端商务车系 ───
+      business: {
+        carModels: ['S级', 'GLC', 'GLE', 'EQE', '迈巴赫', 'V级'],
+        carTypes: ['旗舰', 'MPV', '新能源', 'SUV'],
+        priceRange: { min: 50, max: 200 },
+        primaryModel: 'V级',
+      },
+      // ─── 联系方式（市场拓展部） ───
+      contact: {
+        phone: '010-8888-9999',
+        wechat: 'jmy-bd',
+        storeName: '北京奔驰 · 市场拓展部',
+        storeAddress: '北京市朝阳区东四环中路18号奔驰4S中心3楼',
+        businessHours: '9:30-18:00（工作日）',
+        location: '北京 · 朝阳',
+      },
+      // ─── 技能与 SOP 配置（沉睡激活+活动通知） ───
+      skillConfig: {
+        enabledSkills: ['intent_recognition', 'strategy_select', 'reply_generate', 'crm_update', 'send_message', 'schedule_followup', 'knowledge_search'],
+        skillParams: {
+          strategy_select: { strategy: 'RECONNECT_HOOK' },
+          reply_generate: { tone: 'professional_business' },
+        },
+        recommendedSops: ['dormant_wake', 'campaign_notify'],
+        enabledSops: ['dormant_wake', 'campaign_notify'],
+      },
+      // ─── 话术风格延伸 ───
+      styleExtends: {
+        greetingTemplates: [
+          '您好，我是奔驰市场拓展部的江月明，了解到贵司有用车需求，我整理了一份企业购车方案给您参考。',
+          '您好，好久没联系了，最近有新车上市，给您发个资料看看？',
+        ],
+        closingTemplates: [
+          '本周六有{primaryModel}试驾体验日，给您留了 2 个名额，方便参加吗？',
+          '批量购车我们有专属政策，3 台以上额外优惠，方案我帮您整理好。',
+        ],
+        comfortTemplates: [
+          '没关系，您先看看资料，有需要随时联系我，方案我可以根据贵司需求定制。',
+          '理解贵司有内部流程，时间上不着急，我先把方案留着供您参考。',
+        ],
+        bannedPhrases: ['便宜', '甩卖', '清仓', '随便'],
+        frequentEmojis: ['📈', '🤝', '🏢', '📋'],
+      },
     },
   ],
   replySuggestions: [],
@@ -1621,11 +1989,15 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   setClientTyping: (typing) => set({ clientTyping: typing }),
 
   sendClientMessage: async () => {
-    const { clientDraft, clientViewLeadId, leads, settings, modelCookies } = get()
+    const { clientDraft, clientViewLeadId, leads, settings, modelCookies, activePersonaId, personas } = get()
     if (!clientDraft.trim() || !clientViewLeadId) return
 
     const lead = leads.find(l => l.id === clientViewLeadId)
     if (!lead) return
+
+    // ─── 获取当前人设（用于注入业务上下文 system prompt） ─────
+    const persona = personas.find(p => p.id === activePersonaId) || personas[0]
+    const personaSystemPrompt = buildPersonaContextPrompt(persona)
 
     set({ clientSending: true })
 
@@ -1721,12 +2093,26 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         eventBus.emitStatusUpdate('blocked')
       } else {
         // 调用 AI 大脑（多模型降级 + 用户配置的 Cookie）
+        // ─── 注入人设业务上下文：在 messages 头部插入 system 消息 ───
+        // 让 AI 能引用 persona.business.carModels / persona.contact.storeAddress 等信息
+        // 当客户问"你卖什么车"/"多少钱"/"地址在哪"时直接给出准确数据
+        //
+        // ─── Role 映射修复 ───
+        // LeadMessage.role 可能是 'lead'/'ai'/'human'/'user'/'assistant'/'system'
+        // 但 brain API 只认标准 'user'/'assistant'/'system'
+        // 映射：lead→user, ai→assistant, human→assistant, 其余原样
+        const mapRole = (r: string): 'user' | 'assistant' | 'system' => {
+          if (r === 'lead' || r === 'user') return 'user'
+          if (r === 'ai' || r === 'human' || r === 'assistant') return 'assistant'
+          return 'system'
+        }
         const brainRes = await fetch('/api/waos/brain', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             messages: [
-              ...(lead.messages || []).slice(-10).map(m => ({ role: m.role, content: m.content })),
+              { role: 'system', content: personaSystemPrompt },
+              ...(lead.messages || []).slice(-10).map(m => ({ role: mapRole(m.role), content: m.content })),
               { role: 'user', content: clientDraft },
             ],
             model: 'auto',
@@ -2359,6 +2745,184 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     set({ personas: get().personas.map(p => p.id === personaId ? optimized : p) })
     get().logs.unshift({ level: 'info' as const, msg: `[AI OPTIMIZE] ✅ 人设校准完成: ${persona.name} (warmth${delta > 0 ? '+' : ''}${delta}, pressure${persona.personality.pressure > 70 ? '-' : '+'}${Math.abs(delta)})`, ts: Date.now() })
     set({ logs: [...get().logs] })
+  },
+
+  // ─── 人设系统深度重构：业务/联系/技能/SOP/风格 CRUD ──────────────
+  // 局部更新人设任意字段，统一走 patch 模式 + 持久化。
+  // 设计要点：每次更新后自动 persist 到 localStorage，刷新页面不丢配置。
+  updatePersonaBusiness: (id, business) => {
+    const personas = get().personas.map(p =>
+      p.id === id ? { ...p, business: { ...p.business, ...business } } : p
+    )
+    set({ personas })
+    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 业务配置更新: ${personas.find(p => p.id === id)?.name} (carModels=${business.carModels?.length ?? 'n/a'})`, ts: Date.now() })
+    set({ logs: [...get().logs] })
+    get().persistPersonas()
+  },
+
+  updatePersonaContact: (id, contact) => {
+    const personas = get().personas.map(p =>
+      p.id === id ? { ...p, contact: { ...p.contact, ...contact } } : p
+    )
+    set({ personas })
+    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 联系方式更新: ${personas.find(p => p.id === id)?.name}`, ts: Date.now() })
+    set({ logs: [...get().logs] })
+    get().persistPersonas()
+  },
+
+  togglePersonaSkill: (id, skillId) => {
+    const personas = get().personas.map(p => {
+      if (p.id !== id) return p
+      const enabled = p.skillConfig.enabledSkills.includes(skillId)
+        ? p.skillConfig.enabledSkills.filter(s => s !== skillId)
+        : [...p.skillConfig.enabledSkills, skillId]
+      return { ...p, skillConfig: { ...p.skillConfig, enabledSkills: enabled } }
+    })
+    set({ personas })
+    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 技能切换: ${skillId} @ ${id}`, ts: Date.now() })
+    set({ logs: [...get().logs] })
+    get().persistPersonas()
+  },
+
+  togglePersonaSop: (id, sopId) => {
+    const personas = get().personas.map(p => {
+      if (p.id !== id) return p
+      const enabled = p.skillConfig.enabledSops.includes(sopId)
+        ? p.skillConfig.enabledSops.filter(s => s !== sopId)
+        : [...p.skillConfig.enabledSops, sopId]
+      return { ...p, skillConfig: { ...p.skillConfig, enabledSops: enabled } }
+    })
+    set({ personas })
+    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] SOP 切换: ${sopId} @ ${id}`, ts: Date.now() })
+    set({ logs: [...get().logs] })
+    get().persistPersonas()
+  },
+
+  applyRecommendedSops: (id) => {
+    const personas = get().personas.map(p => {
+      if (p.id !== id) return p
+      // 把 recommendedSops 中尚未启用的全部加入 enabledSops
+      const merged = Array.from(new Set([...p.skillConfig.enabledSops, ...p.skillConfig.recommendedSops]))
+      return { ...p, skillConfig: { ...p.skillConfig, enabledSops: merged } }
+    })
+    set({ personas })
+    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] ✅ 已一键启用推荐 SOP: ${id}`, ts: Date.now() })
+    set({ logs: [...get().logs] })
+    get().persistPersonas()
+  },
+
+  updatePersonaStyle: (id, style) => {
+    const personas = get().personas.map(p =>
+      p.id === id ? { ...p, styleExtends: { ...p.styleExtends, ...style } } : p
+    )
+    set({ personas })
+    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 话术风格更新: ${personas.find(p => p.id === id)?.name}`, ts: Date.now() })
+    set({ logs: [...get().logs] })
+    get().persistPersonas()
+  },
+
+  // 创建新人设：基于模板合并默认空字段，保证结构完整
+  // 返回新创建人设的 ID（供调用方立即 openPersonaEditor 指向新人设）
+  createPersona: (template) => {
+    const id = `persona_${Date.now()}`
+    const newPersona: Persona = {
+      id,
+      name: template?.name ?? '新人设',
+      shortName: template?.shortName ?? '自定义',
+      color: template?.color ?? '#6b7280',
+      gradient: template?.gradient ?? 'from-gray-400 to-slate-500',
+      avatar: template?.avatar ?? '🎯',
+      systemPrompt: template?.systemPrompt ?? '你是一名专业汽车销售。',
+      description: template?.description ?? '自定义人设',
+      cvr: template?.cvr ?? 0.2,
+      capacity: template?.capacity ?? 30,
+      active: 0,
+      personality: template?.personality ?? { warmth: 70, professionalism: 80, humor: 30, pressure: 50, patience: 80, authority: 60 },
+      tone: template?.tone ?? { formality: 'semiformal', speed: 'medium', emojiLevel: 2, politeness: 80 },
+      skills: template?.skills ?? [],
+      extendedActions: template?.extendedActions ?? [],
+      autoOptimize: template?.autoOptimize ?? false,
+      optimizationScore: 0,
+      role: template?.role ?? 'custom',
+      specialties: template?.specialties ?? [],
+      business: template?.business ?? {
+        carModels: [],
+        carTypes: [],
+        priceRange: { min: 0, max: 100 },
+        primaryModel: '',
+      },
+      contact: template?.contact ?? {},
+      skillConfig: template?.skillConfig ?? {
+        enabledSkills: [],
+        skillParams: {},
+        recommendedSops: [],
+        enabledSops: [],
+      },
+      styleExtends: template?.styleExtends ?? {
+        greetingTemplates: [],
+        closingTemplates: [],
+        comfortTemplates: [],
+        bannedPhrases: [],
+        frequentEmojis: [],
+      },
+    }
+    set({ personas: [...get().personas, newPersona] })
+    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] ✨ 新建人设: ${newPersona.name} (${id})`, ts: Date.now() })
+    set({ logs: [...get().logs] })
+    get().persistPersonas()
+    return id
+  },
+
+  // 复制人设：深拷贝，重新生成 id + 改名加"(副本)"
+  duplicatePersona: (id) => {
+    const src = get().personas.find(p => p.id === id)
+    if (!src) return
+    const newId = `persona_${Date.now()}`
+    const copy: Persona = {
+      ...JSON.parse(JSON.stringify(src)),  // 深拷贝（结构简单，无函数）
+      id: newId,
+      name: `${src.name} · 副本`,
+      active: 0,
+    }
+    set({ personas: [...get().personas, copy] })
+    get().logs.unshift({ level: 'info' as const, msg: `[PERSONA] 📋 复制人设: ${src.name} → ${copy.name}`, ts: Date.now() })
+    set({ logs: [...get().logs] })
+    get().persistPersonas()
+  },
+
+  // 持久化人设列表到 localStorage（JSON.stringify 整个 personas 数组）
+  persistPersonas: () => {
+    if (typeof window === 'undefined') return
+    try {
+      localStorage.setItem('waos:personas', JSON.stringify(get().personas))
+    } catch (e) {
+      console.error('[PERSONA] persist 失败:', e)
+    }
+  },
+
+  // 从 localStorage 恢复人设列表（覆盖种子数据，仅当有数据时）
+  hydratePersonas: () => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = localStorage.getItem('waos:personas')
+      if (!raw) return
+      const stored = JSON.parse(raw) as Persona[]
+      if (Array.isArray(stored) && stored.length > 0) {
+        // 校验：每个 persona 至少有 business/skillConfig/styleExtends 三个新字段（防止旧数据兼容）
+        const safe = stored.map(p => ({
+          ...p,
+          business: p.business ?? { carModels: [], carTypes: [], priceRange: { min: 0, max: 100 }, primaryModel: '' },
+          contact: p.contact ?? {},
+          skillConfig: p.skillConfig ?? { enabledSkills: [], skillParams: {}, recommendedSops: [], enabledSops: [] },
+          styleExtends: p.styleExtends ?? { greetingTemplates: [], closingTemplates: [], comfortTemplates: [], bannedPhrases: [], frequentEmojis: [] },
+        }))
+        set({ personas: safe })
+        get().logs.unshift({ level: 'system' as const, msg: `[PERSONA] 已从本地恢复 ${safe.length} 个人设`, ts: Date.now() })
+        set({ logs: [...get().logs] })
+      }
+    } catch (e) {
+      console.error('[PERSONA] hydrate 失败:', e)
+    }
   },
 
   // ─── 大模型 Provider actions ────────────────────────────────
@@ -3282,4 +3846,16 @@ export const useAuditForLead = (leadId: string | null) => {
     })
     return unique.sort((a, b) => b.ts - a.ts).slice(0, 20)
   }, [auditLog, events, lead, leadId])
+}
+
+// ─── 启动时从 localStorage 恢复人设配置（仅浏览器端执行一次） ────────
+// 用 setTimeout(0) 延迟到下一个 tick，确保 store 已完全初始化。
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    try {
+      useOpsStore.getState().hydratePersonas()
+    } catch (e) {
+      console.warn('[PERSONA] hydrate 启动失败（忽略，使用种子数据）:', e)
+    }
+  }, 0)
 }

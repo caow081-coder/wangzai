@@ -94,12 +94,19 @@ export class WeChatBridge {
     try {
       const sdk = await loadSDK()
       if (sdk.isLoggedIn()) { this.loggedIn = true; return true }
-      this.accountId = await sdk.login()
+      // 超时保护：扫码登录最多等待 120s，避免在无微信客户端环境 hang 住
+      this.accountId = await Promise.race([
+        sdk.login(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('登录超时：请确保微信客户端已启动并在 120 秒内扫码')), 120000)
+        ),
+      ])
       this.loggedIn = true
       this.listeners.onLogin?.(this.accountId)
       return true
     } catch (err) {
-      this.listeners.onError?.(err instanceof Error ? err.message : '登录失败')
+      const msg = err instanceof Error ? err.message : '登录失败'
+      this.listeners.onError?.(msg)
       return false
     }
   }

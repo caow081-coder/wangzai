@@ -399,7 +399,10 @@ function ChatWindow() {
 
 function PCMessageBubble({ msg, leadName, leadColor, personaAvatar }: { msg: LeadMessage; leadName: string; leadColor?: string; personaAvatar: string }) {
   const isMe = msg.role === 'assistant' || msg.role === 'human'
-  const time = new Date(msg.createdAt).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })
+  // 兼容 createdAt (string) 和 ts (number) 两种字段，防 Invalid Date
+  const rawTs = (msg as any).createdAt ?? (msg as any).ts ?? (msg as any).timestamp
+  const date = rawTs ? new Date(rawTs) : null
+  const time = date && !isNaN(date.getTime()) ? date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' }) : ''
 
   if (msg.role === 'system') {
     return <div className="text-center py-1"><span className="text-[10px] px-2.5 py-1 rounded bg-[#e8e8e8] dark:bg-[#3a3a3a] text-[#7a7a7a] dark:text-[#9a9a9a]">{msg.content}</span></div>

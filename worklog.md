@@ -87,3 +87,57 @@ dev server 清理 `.next` 缓存后重启，agent-browser 打开 `http://localho
 3. **功能扩展**：继续推进压测监控、视频号截流、沉睡客户群发等核心功能
 4. **逆向大模型优化**：豆包/Kimi/智谱 Cookie 逆向降级链调优
 5. **Windows 打包**：确保 `bun run electron:build` 在 Windows 端产出可用 exe
+
+---
+Task ID: 4
+Agent: full-stack-developer
+Task: 开发视频号接入层
+
+Work Log:
+- 阅读 worklog.md / douyin/connector.ts / douyin/route.ts / video-preload.js，确认现有 stub 仅 22 行需彻底重写
+- 新建 `src/lib/wechat-video/connector.ts`（325 行）：定义 VideoComment / VideoMessage / WechatVideoConnector 三接口；实现 `calculateIntent` 意向分算法（4 规则 + 基础 50 + clamp 0-100）；实现 `withTimeout` 超时保护（10s）；MockWechatVideoConnector 内置 8 条奔驰销售种子评论（GLC/GLE/E级/S级迈巴赫/C级/EQE/AMG/vs X3 负面对比）；getComments 按 videoPlayCount 降序排序
+- 新建 `src/app/api/waos/wechat-video/route.ts`（127 行）：7 个 actions（login/get_comments/get_messages/reply_comment/send_dm/like_video/logout）+ GET 状态返回；runtime='nodejs', dynamic='force-dynamic'；try-catch 双层错误兜底
+- 重写 `electron/preloads/video-preload.js`（22 → 450 行）：MutationObserver 监听评论 DOM；多套选择器兜底；注入"旺财一键回复"按钮（翠绿 #10b981 区别原 UI）；私信防封延迟 2-5s 随机；路由切换兜底扫描（SPA 1.5s 轮询）；暴露 `window.wangcaiVideo` API（start/stop/onComment/getComments/scan/sendDM/setDmSendHook/likeVideo/replyComment）；兼容旧 API `__wangcai` / `__wangcaiEvent` / `__wangcaiSetCallback`
+- 运行 `bun run lint`：新增 TS 文件零 lint 错误；video-preload.js 的 require() 错误与 douyin-preload.js / wechat-preload.js 一致（项目级 Electron CommonJS 架构约束）
+- curl 实测全部 7 个 action：GET 返回 8 条评论按播放量降序排列（迈巴赫645000 → AMG528000 → GLE412000 → GLC286000 → EQE223000 → E级158000 → C级97000）；意向分实例：GLC询价80、AMG试驾75、EQE询价+负面70、GLC负面40、迈巴赫无关键词50；reply_comment 后 vc1 replyStatus=replied + aiReply 写入；send_dm 后新消息出现在 get_messages；videoId 过滤正确
+
+Stage Summary:
+- 产出文件清单：
+  * `src/lib/wechat-video/connector.ts`（325 行，新建）
+  * `src/app/api/waos/wechat-video/route.ts`（127 行，新建）
+  * `electron/preloads/video-preload.js`（450 行，重写自 22 行 stub）
+  * `agent-ctx/4-full-stack-developer.md`（工作记录）
+  * 合计 902 行新业务代码
+- 关键决策：
+  1. 意向分按 rule 加分一次（避免同义关键词堆砌刷分，"多少钱"+"优惠"同属询价规则只 +30）
+  2. getComments 无条件按 videoPlayCount 降序（spec 要求高播放量优先截流）
+  3. Mock sendDM 同步写入 VideoMessage 便于 get_messages 追溯
+  4. preload 端本地算意向分（4 正则规则与 connector.ts 对齐，避免 IPC 往返）
+  5. preload 兼容旧 API + 新增 `window.wangcaiVideo` 完整 API
+  6. 私信防封延迟 2-5s 随机（避免固定间隔被反作弊识别）
+  7. 错误处理双层兜底：connector 内 withTimeout + route 外 try-catch + GET 端 .catch
+  8. runtime='nodejs' + dynamic='force-dynamic' 与 douyin route 保持一致
+
+---
+Task ID: 7
+Agent: general-purpose
+Task: 写项目文档
+
+Work Log:
+- 前置阅读 7 份关键文件：worklog.md / package.json / src/app/page.tsx / src/app/api/waos/brain/route.ts (前 50 行) / src/lib/safety.ts (前 50 行) / electron/main.js (前 80 行) / src/components/waos/ 目录 (22 个组件)
+- 浏览项目根目录结构，确认 13 个 API route + 3 个 mini-service + Electron 桌面壳完整存在
+- 抽样阅读 src/lib/identity/kernel.ts (127 行) + src/lib/wechat/bridge.ts (141 行) + electron/sandbox.js (前 60 行) + electron/ui-actuation.js (前 60 行) + src/lib/douyin/connector.ts (前 60 行) + prisma/schema.prisma
+- grep 确认 5 个奔驰销售人设的真实 ID 和名称：star_sales 苏念安 / closer 顾倾城 / service 叶之秋 / marketing 陈墨白 / bd 江月明
+- 创建 /home/z/my-project/README.md (658 行)：项目标题 + 🐕 emoji + 一句话简介 + 6 个技术栈徽章 + 4 个核心特性卡片 + 13 节目录 + 完整文档
+- 创建 /home/z/my-project/docs/INSTALL.md (554 行)：分普通用户 / 开发者 / 打包发布三类用户，含环境要求、依赖说明、10 个 FAQ
+- 创建 /home/z/my-project/docs/FEATURES.md (1089 行)：逐一详细说明 10 大功能模块，每功能配使用步骤和源码定位
+- 创建 /home/z/my-project/docs/ARCHITECTURE.md (958 行)：6 层架构 ASCII 图 + 22 个组件清单 + 13 个 API route 表 + 数据流走向图 + 代码量统计
+- 全部文档中文为主、技术术语保留英文、用 emoji 和表格增强可读性、代码块带语言标注
+- 追加本工作记录到 worklog.md
+
+Stage Summary:
+- /home/z/my-project/README.md (658 行) — 主文档，GitHub 项目首页
+- /home/z/my-project/docs/INSTALL.md (554 行) — 三类用户安装指南
+- /home/z/my-project/docs/FEATURES.md (1089 行) — 10 大功能逐一说明
+- /home/z/my-project/docs/ARCHITECTURE.md (958 行) — 6 层架构 + 数据流图
+- 合计 3259 行文档

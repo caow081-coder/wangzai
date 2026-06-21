@@ -49,21 +49,17 @@ export async function POST(req: NextRequest) {
 
   switch (action) {
     case 'login': {
-      try {
-        const ok = await bridge.login()
-        return NextResponse.json({
-          action: 'login',
-          success: ok,
-          loggedIn: bridge.isLoggedIn(),
-          message: ok ? '请在终端扫描二维码登录微信' : '登录失败',
-        })
-      } catch (err) {
-        return NextResponse.json({
-          action: 'login',
-          success: false,
-          error: err instanceof Error ? err.message : 'unknown',
-        }, { status: 500 })
-      }
+      // 超时保护：API 层 15s 超时，避免前端长时间等待
+      const loginPromise = bridge.login()
+      const timeoutPromise = new Promise<false>((resolve) => setTimeout(() => resolve(false), 15000))
+      const ok = await Promise.race([loginPromise, timeoutPromise])
+      return NextResponse.json({
+        action: 'login',
+        success: ok,
+        loggedIn: bridge.isLoggedIn(),
+        message: ok ? '登录成功，已开始监听消息' : '登录超时或失败，请确保微信客户端已启动并扫码（最长等待 120 秒）',
+        tip: ok ? undefined : '在 Windows Electron 端点击「微信连接」按钮，扫码后即可自动收发消息',
+      })
     }
 
     case 'start': {

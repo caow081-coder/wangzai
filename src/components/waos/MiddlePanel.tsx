@@ -421,7 +421,11 @@ function MessageBubble({ msg, leadPersonaColor }: { msg: LeadMessage; leadPerson
         <div className="flex items-center gap-1.5 mb-0.5 text-[9px] font-mono text-muted-foreground">
           <span>{isUser ? '用户' : isHuman ? '人工' : 'AI'}</span>
           <span>·</span>
-          <span>{new Date(msg.createdAt).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+          <span>{(() => {
+            const rawTs = (msg as any).createdAt ?? (msg as any).ts ?? (msg as any).timestamp
+            const d = rawTs ? new Date(rawTs) : null
+            return d && !isNaN(d.getTime()) ? d.toLocaleTimeString('zh-CN', { hour12: false }) : '--'
+          })()}</span>
           {msg.latency && (<><span>·</span><span className="text-emerald-500/70">{msg.latency}ms</span></>)}
           {msg.tokensUsed && (<><span>·</span><span>{msg.tokensUsed} tok</span></>)}
         </div>

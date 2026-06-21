@@ -770,3 +770,46 @@ Stage Summary:
 - 不破坏现有功能：5 个种子人设的 id/name/avatar/systemPrompt/skills/personality/tone/role 等所有原字段完整保留，只是新增字段
 - SOP 模板 ID 引用对齐：high_intent_close / dormant_wake / complaint_handle / referral_fission / campaign_notify / after_sales_follow / new_customer_welcome（对应 src/lib/sop/templates.ts 的 idHint）
 - 9 个 Skill ID 引用对齐：intent_recognition / value_evaluation / strategy_select / reply_generate / crm_update / send_message / schedule_followup / human_handoff / knowledge_search（对应 src/lib/sop/skills.ts）
+
+---
+Task ID: 主轮次-人设深度重构+UI精简+微信真实化+AI修复
+Agent: 主 Claude (50年全栈工程师)
+Task: 用户6大问题深度优化(人设可配置/顶栏精简/右侧紧凑/微信真实化/AI回复修复/SOP融入人设)
+
+Work Log:
+- P1 人设系统深度重构(派subagent,+1000行):
+  - Persona接口扩展4字段块: business/contact/skillConfig/styleExtends
+  - 5种子人设填充业务配置(车型/价格/联系方式/推荐SOP)
+  - PersonaEditor.tsx(562行,5 Tabs: 基本/业务/联系/技能SOP/话术)
+  - 9个CRUD方法 + localStorage持久化
+  - buildPersonaContextPrompt: AI上下文注入人设业务数据
+  - SOP融入人设skillConfig(不再独立模块)
+- P2 顶栏精简(派subagent):
+  - 删除6个数字快捷键,合并AI大脑+大模型对接,合并主题切换
+  - 顶栏元素14→11个,长尾功能收进SettingsDialog
+- P3 右侧紧凑化(派subagent):
+  - MonitorBar/StressMonitorPanel缩小,LeadHeader padding减
+  - 4字段1行4列横排,Actions小图标,长section默认折叠
+- P4 左侧微信模拟真实化(自做):
+  - 真实PC微信导航: 聊天/通讯录/收藏/朋友圈/视频号/小程序/截流/设置/更多
+  - SOP引擎入口移到人设系统(符合'SOP融入人设')
+- P5 AI回复真实性修复(自做):
+  - 根因: 种子消息role='lead'/'ai', brain API只认'user'/'assistant'
+  - 修复: sendClientMessage加mapRole()映射
+  - 验证: AI回复能引用门店地址+电话+车型价格
+- agent-browser端到端验证:
+  - 顶栏11元素(微信连接/AI大脑/通知/主题循环/全局熔断/设置)
+  - 左侧6导航+设置更多(模拟真实微信)
+  - 人设编辑器5 tab,业务能力车型多选(C级✅/GLC✅/GLE✅)
+  - AI回复: '您好,我可以帮您申请一下优惠'(符合安全护盾)
+- lint: 0 errors, dev server HTTP 200
+- git push (commit 9e173a0)
+
+Stage Summary:
+- 人设从'设定死'变成'可配置延伸': 车型/价格/联系方式/技能/SOP/话术全可编辑
+- SOP融入人设skillConfig,不再是独立模块(符合用户'SOP是为了方便开始')
+- 顶栏从14元素精简到11,右侧紧凑化一屏可见核心信息
+- 左侧模拟真实PC微信导航(6按钮+设置)
+- AI回复修复role映射,能引用人设业务数据,不再牛头不对马嘴
+- GitHub: commit 9e173a0,本地远端同步
+- 下一阶段: 抖音/视频号嵌入 + RAG知识库 + 打包Windows exe验证

@@ -369,7 +369,7 @@ interface OpsState {
   clientTyping: boolean  // show "对方正在输入..." animation
   clientDraft: string
   clientSending: boolean
-  clientTab: 'chat' | 'moments' | 'contacts' | 'intercept'  // 微信客户端内部 tab: 聊天/朋友圈/通讯录/截流
+  clientTab: 'chat' | 'moments' | 'contacts' | 'intercept' | 'sop'  // 微信客户端内部 tab: 聊天/朋友圈/通讯录/截流/SOP引擎
 
   // 防双端打架：人工接管警告横幅（10 秒静默窗口期内 AI 暂停回复）
   takeoverWarning: TakeoverWarning | null

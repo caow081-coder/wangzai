@@ -492,3 +492,63 @@ Stage Summary:
 - 本轮新增 3500+ 行代码（朋友圈2296 + CRM/表单439 + kernel扩展200 + safety扩展60）
 - 核心功能100%覆盖，剩余2项为架构差异(顶栏vs窄导航/BrowserView vs DWM)
 - GitHub: commit 26ea904，本地远端同步
+
+---
+Task ID: SOP-UI
+Agent: full-stack-developer
+Task: 开发SOP引擎完整UI（设计器+列表+日志面板）
+
+Work Log:
+- 前置阅读：worklog.md / src/lib/sop/types.ts（SopNode/SopEdge/SopDefinition/SopInstance/SopNodeLog 完整类型）/ src/lib/sop/skills.ts（9 Skill 定义 + inputSchema/outputSchema）/ src/lib/sop/templates.ts（3 预设模板 16+12+12 节点结构 + 坐标）/ src/lib/sop/runtime.ts（createSopDefinition/updateSopDefinition/listInstances/getInstanceLogs 等 API）/ src/app/api/waos/sop/route.ts（10+ action 完整 POST + 6 GET view）/ src/components/waos/WeChatClient.tsx（NavButton 模式 + 4 个 navTab + 右侧内容区条件渲染）
+- 设计 4 个新文件架构：
+  * SopNodePalette.tsx（161 行）：左侧 Skill 工具箱，按 category 分组（recognition/evaluation/generation/execution/notification），HTML5 native drag-and-drop 拖到画布
+  * SopDesigner.tsx（625 行）：SVG 画布 + HTML 节点 div 叠加，6 种节点类型不同颜色/形状（trigger 绿色圆角 / skill 蓝色矩形 / condition 橙色菱形 SVG polygon / wait 紫色矩形 / notify 黄色矩形 / end 红色圆角），贝塞尔曲线连线（YES 绿 / NO 红 / default 灰），节点拖拽（onMouseDown/Move/Up + drag preview state），运行时高亮（脉冲光环 + stroke-dasharray 流动动画），缩放（Ctrl+wheel + 按钮），Skill 拖入画布（HTML5 dataTransfer）
+  * SopRunLog.tsx（395 行）：底部可折叠时间线列表，4 状态（success/failed/running/skipped 各色徽章 + running 闪烁），按实例/状态筛选 + 搜索框，运行中每 2 秒自动刷新，点击展开 input/output JSON 详情
+  * SopPanel.tsx（1145 行）：三栏布局（左 200 SOP 列表 + 中 SopDesigner + 右 260 属性面板）+ 底部 SopRunLog。左栏按分类分组 + 激活开关 + 节点数 + 版本号 + 删除按钮 hover 显隐；右栏 PropertiesPanel 根据 node.type 动态显示不同编辑器（SkillNodeEditor/ConditionNodeEditor/WaitNodeEditor/NotifyNodeEditor/EndNodeEditor）；3 个对话框（CreateSopDialog 创建空 SOP / RunSopDialog 输入客户信息运行 / AlertDialog 删除确认）
+- 修改 useOpsStore.ts：clientTab 类型加 'sop'（line 372）+ 初始值不变
+- 修改 WeChatClient.tsx：导入 SopPanel + NavTab type 加 'sop' + nav 区添加「🤖 SOP引擎」NavButton（在视频获客下方）+ 条件渲染 `{navTab === 'sop' && <SopPanel />}`
+- 修改 globals.css：追加 @keyframes sop-flow（边线流动动画）+ .waos-scrollbar（自定义滚动条 6px）+ .bg-grid（画布网格背景定位）
+- React 19 严格模式适配（解决 react-hooks/set-state-in-effect 4 处 error）：
+  * SkillNodeEditor 原用 useEffect 同步 paramText → 改用 key={node.id + paramsHash} 在父组件重 mount
+  * CreateSopDialog/RunSopDialog 原用 useEffect 重置表单 → 删除（Radix Dialog 关闭即卸载，重新打开 useState 自然重置）
+  * SopDesigner 原用 useEffect setIsDirty(false) 同步 definition 切换 → 移除本地 isDirty 状态，改为受父组件 isDirty prop 控制
+  * 修复 SopDesigner JSX 语法错误（菱形 SVG ternary 缺 `}` 闭合）
+- 验证：
+  * bun run lint：0 errors, 4 warnings（全部为既存无关警告：BrainSettings/Splashscreen/TopBar 的 Unused eslint-disable）
+  * curl /api/waos/sop?view=definitions：返回 3 个预设 SOP（投诉/沉睡/高意向）
+  * curl /api/waos/sop?view=skills：返回 9 个 Skill，分 5 类（recognition/evaluation/generation/execution/notification）
+  * curl /：HTTP 200
+  * dev.log：✓ Compiled 多次成功，无 error
+
+Stage Summary:
+- 产出文件清单：
+  * `src/components/waos/sop/SopNodePalette.tsx`（161 行，新建）
+  * `src/components/waos/sop/SopDesigner.tsx`（625 行，新建）
+  * `src/components/waos/sop/SopRunLog.tsx`（395 行，新建）
+  * `src/components/waos/sop/SopPanel.tsx`（1145 行，新建）
+  * `src/components/waos/WeChatClient.tsx`（811 行，修改：+5 行导入/NavButton/路由）
+  * `src/store/useOpsStore.ts`（3285 行，修改：1 行 clientTab 类型加 'sop'）
+  * `src/app/globals.css`（151 行，修改：+30 行 sop-flow keyframes + waos-scrollbar）
+  * `agent-ctx/SOP-UI-full-stack-developer.md`（新建工作记录）
+  * 合计 +2372 行新业务代码
+- 关键决策：
+  1. 不依赖 react-flow 等重库，纯 SVG + HTML div 实现（节点 div 易于拖拽和编辑，SVG 适合连线）
+  2. 菱形 condition 节点用 SVG polygon + 父 div currentColor（fillOpacity 0.15）实现，避免 clip-path 边框丢失
+  3. 节点拖拽用本地 drag state（currentX/currentY），仅在 mouseUp 时调 onNodesChange 提交最终位置，避免父组件每次 mousemove 重渲染
+  4. Skill 工具箱拖入用 HTML5 native dataTransfer（不引入 dnd-kit），支持拖拽 + 点击两种添加方式
+  5. 边线智能选边：水平距离 > 0.8 节点宽时用 right/left 锚点，否则用 bottom/top，避免长水平线被画成大 S 弯
+  6. 运行时高亮双层效果：节点脉冲光环（Framer Motion scale 0.95→1.05）+ 流出边 stroke-dasharray 流动动画（CSS keyframes sop-flow）
+  7. 日志面板 4 状态彩色徽章 + 自动刷新（运行中每 2 秒）+ 点击展开 JSON 详情（input/output 双栏）
+  8. PropertiesPanel 受控 props（onUpdate 透传到 SopPanel）+ SkillNodeEditor 用 key 重 mount 同步外部更新
+  9. 创建空 SOP 自动包含 trigger → end 最小骨架，避免用户面对空白画布
+  10. 运行 SOP 弹对话框输入客户信息（默认 test_001/测试客户/奔驰C级多少钱？），便于端到端测试
+- WAOS-X SOP 引擎 Phase 4-7 完成情况：
+  * Phase 4 可视化设计器 ✅（SVG 画布 + 6 节点类型 + 拖拽 + 选中 + 运行高亮）
+  * Phase 5 SOP 列表 ✅（分类分组 + 激活开关 + 删除 + 新建）
+  * Phase 6 属性面板 ✅（5 种节点类型独立编辑器 + Skill 参数 JSON 编辑 + 删除保护）
+  * Phase 7 运行日志 ✅（时间线 + 筛选 + 搜索 + 自动刷新 + JSON 详情）
+- 后续可消费点：
+  * SopDesigner 当前节点高亮可直接读取 currentInstance.currentNodeId，未来可叠加进度条
+  * SopRunLog 全实例模式（filterInstance='all'）可拉取最近 10 个实例日志，可作为「全局执行历史」
+  * PropertiesPanel 的 Skill 参数 JSON 编辑器可升级为基于 inputSchema 的表单生成器
+  * SopNodePalette 拖入位置目前是鼠标释放点，未来可加吸附网格

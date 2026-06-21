@@ -128,3 +128,78 @@ model AiCall {
   @@index([model, timestamp])
   @@index([success])
 }
+
+// ─── SOP 引擎：4 张表（对齐 WAOS-X SOP 引擎设计）─────────────────
+
+// SOP 定义表：流程定义（JSON 格式的节点+连线）
+model SopDefinition {
+  id                String   @id @default(cuid())
+  name              String
+  description       String?
+  triggerType       String   @default("manual") // manual | auto_schedule | auto_event
+  triggerCondition  String?  // JSON: {"intent":"PRICE","minValue":80}
+  nodes             String   // JSON: 所有节点定义
+  edges             String   // JSON: 节点连线关系
+  category          String   @default("默认流程") // 默认流程 | 营销流程 | 售后流程
+  isActive          Boolean  @default(true)
+  version           Int      @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  instances         SopInstance[]
+
+  @@index([category, isActive])
+}
+
+// SOP 执行实例表：每次执行的状态追踪
+model SopInstance {
+  id                String   @id @default(cuid())
+  sopDefinitionId   String
+  customerId        String   // 客户/线索 ID
+  currentNodeId     String?  // 当前所在节点
+  status            String   @default("running") // running | paused | completed | failed | aborted
+  context           String   @default("{}") // JSON: 执行上下文
+  startedAt         DateTime @default(now())
+  completedAt       DateTime?
+  updatedAt         DateTime @updatedAt
+
+  definition        SopDefinition @relation(fields: [sopDefinitionId], references: [id], onDelete: Cascade)
+  nodeLogs          SopNodeLog[]
+
+  @@index([customerId, status])
+  @@index([status])
+}
+
+// SOP 节点日志表：每个节点执行日志
+model SopNodeLog {
+  id                String   @id @default(cuid())
+  sopInstanceId     String
+  nodeId            String
+  nodeName          String?
+  skillName         String?
+  input             String?  // JSON
+  output            String?  // JSON
+  status            String   @default("success") // success | failed | skipped | running
+  errorMessage      String?
+  startedAt         DateTime @default(now())
+  completedAt       DateTime?
+  durationMs        Int      @default(0)
+
+  instance          SopInstance @relation(fields: [sopInstanceId], references: [id], onDelete: Cascade)
+
+  @@index([sopInstanceId, startedAt])
+}
+
+// Skill 注册表：用于 UI 工具箱展示
+model SkillRegistry {
+  id                String   @id
+  name              String
+  description       String
+  category          String   // recognition | evaluation | generation | execution | notification
+  inputSchema       String   // JSON Schema
+  outputSchema      String   // JSON Schema
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  @@index([category, isActive])
+}

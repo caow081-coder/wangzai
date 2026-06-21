@@ -11,8 +11,9 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MomentsPanel } from '@/components/waos/MomentsPanel'
+import { SopPanel } from '@/components/waos/sop/SopPanel'
 
-type NavTab = 'chat' | 'contacts' | 'moments' | 'intercept'
+type NavTab = 'chat' | 'contacts' | 'moments' | 'intercept' | 'sop'
 
 // 补充类型定义（修复 TS2304）
 type InterceptTargetType = Record<string, unknown>
@@ -50,6 +51,8 @@ export function WeChatClient() {
         <NavButton active={navTab === 'moments'} onClick={() => setNavTab('moments')} icon={<Camera className="w-5 h-5" />} label="朋友圈" />
         {/* 视频号截流 */}
         <NavButton active={navTab === 'intercept'} onClick={() => setNavTab('intercept')} icon={<Video className="w-5 h-5" />} label="视频获客" badge={undefined} />
+        {/* SOP 引擎 */}
+        <NavButton active={navTab === 'sop'} onClick={() => setNavTab('sop')} icon={<span className="text-[18px] leading-none">🤖</span>} label="SOP引擎" />
 
         <div className="flex-1" />
 
@@ -67,6 +70,7 @@ export function WeChatClient() {
       {navTab === 'contacts' && <ContactsLayout />}
       {navTab === 'moments' && <MomentsPanel />}
       {navTab === 'intercept' && <InterceptLayout />}
+      {navTab === 'sop' && <SopPanel />}
     </div>
   )
 }

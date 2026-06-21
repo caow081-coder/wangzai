@@ -120,3 +120,32 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ─── SOP 引擎相关样式 ─────────────────────────────────────── */
+
+/* 节点边线流动动画（运行时高亮） */
+@keyframes sop-flow {
+  0% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -20; }
+}
+
+/* 运行日志面板自定义滚动条 */
+.waos-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.waos-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.waos-scrollbar::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 3px;
+}
+.waos-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
+
+/* SOP 设计器画布网格背景 */
+.bg-grid {
+  background-position: 0 0;
+}

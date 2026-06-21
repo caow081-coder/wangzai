@@ -453,3 +453,42 @@ Stage Summary:
   * useOpsStore.updateLeadForm 可被未来 AI 自动填表功能调用（LLM 推断车型/预算/情绪/家庭后自动写入）
   * Lead.version 与 Prisma schema 对齐，接入真实数据库时 ORM 层无需改造
   * LeadFormSection 4 字段值可被 SalesCopilot 用于策略选择（如预算 30 万以下 → 推 C 级话术）
+
+---
+Task ID: 主轮次-按优先级补齐6项
+Agent: 主 Claude (全栈工程师)
+Task: 按优先级补齐 WAOS-X 剩余6项功能（朋友圈+高危词+动态乘数+模板+CRM version+线索表单）
+
+Work Log:
+- P1 朋友圈场控面板（派subagent，2296行）：
+  - moments/connector.ts(614行): 6朋友圈16评论 + patrol巡视任务
+  - moments API route(167行): 8 actions
+  - MomentsPanel.tsx(875行): 完整UI(进度条+卡片+评论+日志+发朋友圈)
+  - wechat-preload.js(22→640行): DOM注入+防封
+- P2 高危词清单对齐（自做）：
+  - safety.ts: HIGH_RISK_KEYWORDS 16词(降价/保证最低/送保险/内部价等)
+  - sanitizeInput + filterOutput 第0层高危熔断
+  - 验证: '降价保证最低送保险' → 拦截
+- P3 商业价值动态乘数系统（自做）：
+  - kernel.ts compilePersona: 4乘数(urgency/value/risk/trust)
+  - 策略选择受乘数影响 + getMultipliers()导出
+- P4 CRM表格5列含version+乐观锁冲突（派subagent，+211行）：
+  - useOpsStore: Lead加version + testOptimisticLock方法
+  - ProDrawer: CrmPanel + Table 5列 + version Badge + 乐观锁测试按钮
+  - 验证: 点击林晚秋(v3) → '乐观锁冲突,当前v3请刷新'
+- P5 动态线索表单4字段（派subagent，+228行）：
+  - DecisionPanel: LeadFormSection(车型/预算/情绪/家庭)
+  - Framer Motion绿色高亮闪烁
+- P6 AI话术纯模板驱动（自做）：
+  - kernel.ts: REPLY_TEMPLATES 12模板(4策略×多场景) + matchTemplate()
+- agent-browser端到端验证：
+  - 朋友圈面板完整渲染+巡视进度+5卡片+评论统计
+  - CRM表格5列+version(v1-v5)+乐观锁冲突测试成功
+- lint: 0 errors, dev server HTTP 200
+- git push (commit 26ea904)
+
+Stage Summary:
+- 核对结果从 89%(71✅+18🟡+8❌) 提升到 97%(95✅+2🟡+0❌)
+- 本轮新增 3500+ 行代码（朋友圈2296 + CRM/表单439 + kernel扩展200 + safety扩展60）
+- 核心功能100%覆盖，剩余2项为架构差异(顶栏vs窄导航/BrowserView vs DWM)
+- GitHub: commit 26ea904，本地远端同步

@@ -70,6 +70,20 @@ async function startStreamService() {
     return
   }
 
+  // 生产模式：内联启动 socket.io（不依赖外部 mini-service，避免 bun 依赖）
+  if (!isDev) {
+    try {
+      const { createServer } = require('http')
+      const streamModule = require(path.join(__dirname, 'stream-service.js'))
+      streamModule.startStreamServer(STREAM_PORT)
+      console.log(`[WAOS-Stream] 内联服务已启动 (port ${STREAM_PORT})`)
+      return
+    } catch (err) {
+      console.error('[WAOS-Stream] 内联启动失败，尝试外部服务:', err.message)
+      // 退化到外部服务（如果存在）
+    }
+  }
+
   const streamPath = path.join(__dirname, '..', 'mini-services', 'waos-stream')
   console.log(`[WAOS-Desktop] Starting stream service from ${streamPath}`)
 

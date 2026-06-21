@@ -207,7 +207,7 @@ async function executeNode(
   instance: SopInstance,
   sop: SopDefinition,
   node: SopNode
-): Promise<{ nextCondition?: 'yes' | 'no' | 'default'; shouldStop: boolean; stopStatus?: InstanceStatus }> {
+): Promise<{ nextCondition?: 'yes' | 'no' | 'default'; shouldStop?: boolean; stopStatus?: InstanceStatus }> {
   const logId = `${instance.id}_${node.id}_${Date.now()}`
   const startedAt = Date.now()
 

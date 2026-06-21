@@ -144,7 +144,7 @@ async function handleProxy(req: NextRequest, pathSegments: string[]) {
       modifiedBody = Buffer.from(proxiedHtml)
     }
 
-    return new NextResponse(modifiedBody, {
+    return new NextResponse(new Uint8Array(modifiedBody), {
       status: res.status,
       headers: responseHeaders,
     })

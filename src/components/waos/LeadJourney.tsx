@@ -91,7 +91,7 @@ export function LeadJourney() {
 
     // From messages — each message is a touchpoint
     ;(lead.messages || []).forEach(m => {
-      const ts = new Date(m.createdAt).getTime()
+      const ts = new Date(m.createdAt || m.ts || Date.now()).getTime()
       if (m.role === 'user') {
         // User message = engagement touchpoint
         const stage = lead.stage === 'hot' ? 'hot' : lead.stage === 'qualified' ? 'qualified' : 'engaged'

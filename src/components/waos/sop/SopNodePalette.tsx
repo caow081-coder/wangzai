@@ -9,7 +9,7 @@
  *  - 每个 Skill 卡片显示：图标 + 名称 + 描述
  *  - 支持拖拽到画布（HTML5 native drag）+ 点击直接添加
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type DragEvent } from 'react'
 import { motion } from 'framer-motion'
 import { Loader2, Brain, Target, GitBranch, Send, Bell, type LucideIcon } from 'lucide-react'
 import { Card } from '@/components/ui/card'
@@ -133,9 +133,14 @@ function SkillCard({ skill, compact, onAdd }: {
       draggable
       onDragStart={(e) => {
         // HTML5 拖拽：将 skill 数据写入 dataTransfer，画布 onDrop 时读取
-        e.dataTransfer.setData('application/x-sop-skill', JSON.stringify(skill))
-        e.dataTransfer.setData('text/plain', skill.id)
-        e.dataTransfer.effectAllowed = 'copy'
+        // framer-motion 的 onDragStart 类型是 PointerEvent | MouseEvent | TouchEvent，
+        // 但配合原生 draggable 属性时实际触发的是原生 DragEvent，这里做类型断言
+        const ev = e as unknown as DragEvent<HTMLDivElement>
+        const dt = ev.dataTransfer
+        if (!dt) return
+        dt.setData('application/x-sop-skill', JSON.stringify(skill))
+        dt.setData('text/plain', skill.id)
+        dt.effectAllowed = 'copy'
       }}
       onClick={() => onAdd?.(skill)}
       className="cursor-grab active:cursor-grabbing"

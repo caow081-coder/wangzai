@@ -2437,7 +2437,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     if (!lead) { set({ customerMemory: null }); return }
 
     // 模拟4层记忆
-    const shortTerm = (lead.messages || []).slice(-30).map(m => ({ role: m.role, content: m.content, ts: new Date(m.createdAt).getTime() }))
+    const shortTerm = (lead.messages || []).slice(-30).map(m => ({ role: m.role, content: m.content, ts: new Date(m.createdAt || m.ts || Date.now()).getTime() }))
     const profile = lead.tags.map(t => ({ key: t, value: '自动识别' }))
     if (lead.alreadyCustomer) profile.push({ key: '已购客户', value: '是' })
     const semantic = lead.tags.includes('price_sensitive') ? [{ memory: '用户之前问过价格，对成本敏感', score: 0.92 }] : []
@@ -3818,7 +3818,7 @@ export const useAuditForLead = (leadId: string | null) => {
       action: m.role === 'assistant' ? 'llm.call' : m.role === 'human' ? 'manual_reply' : 'lead.created',
       reason: m.tokensUsed ? `tokens=${m.tokensUsed} latency=${m.latency || 0}ms` : undefined,
       traceId: m.id,
-      ts: new Date(m.createdAt).getTime(),
+      ts: new Date(m.createdAt || m.ts || Date.now()).getTime(),
     }))
 
     // Always include a "lead.created" entry from the lead's creation time

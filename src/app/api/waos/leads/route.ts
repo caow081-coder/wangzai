@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
       where,
       orderBy: { createdAt: 'desc' },
       take: Math.min(200, Math.max(1, limit)),
-      include: { persona: true, tags: true, messages: { take: 10, orderBy: { createdAt: 'desc' } } },
+      include: { messages: { take: 10, orderBy: { timestamp: 'desc' } } },
     })
     return NextResponse.json({ count: leads.length, leads })
   } catch (err) {
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { externalId, source, userExternalId, userName, lastMessage } = body
+    const { externalId, source, userName, lastMessage } = body
 
     if (!externalId || !source) {
       return NextResponse.json({ error: 'externalId and source required' }, { status: 400 })
@@ -50,8 +50,7 @@ export async function POST(req: NextRequest) {
       data: {
         externalId,
         source,
-        userExternalId: userExternalId || `u_${externalId}`,
-        userName: userName || '匿名用户',
+        name: userName || '匿名用户',
         lastMessage,
         stage: 'new',
         intentScore: 0,
@@ -60,13 +59,13 @@ export async function POST(req: NextRequest) {
       },
     })
 
-    await db.event.create({
+    // 记录线索创建事件到 EventLog（db.event 不存在，改用 EventLog 表）
+    await db.eventLog.create({
       data: {
-        eventType: 'lead.created',
+        type: 'lead.created',
         payload: JSON.stringify({ leadId: lead.id, source, externalId }),
-        level: 'info',
       },
-    })
+    }).catch(e => console.error('[leads] EventLog 写入失败:', e))
 
     return NextResponse.json({ status: 'created', lead }, { status: 201 })
   } catch (err) {

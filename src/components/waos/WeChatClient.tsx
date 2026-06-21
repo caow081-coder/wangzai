@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { MomentsPanel } from '@/components/waos/MomentsPanel'
 import { SopPanel } from '@/components/waos/sop/SopPanel'
 import { useElectronBridge, PlatformEmbedView } from '@/hooks/waos/useElectronBridge'
+import { PlatformEmbedLayout } from '@/components/waos/PlatformEmbedLayout'
 
 type NavTab = 'chat' | 'contacts' | 'favorites' | 'moments' | 'miniprogram' | 'channels' | 'intercept' | 'sop'
 
@@ -27,8 +28,20 @@ const NAV_ITEMS: { id: NavTab; icon: React.ReactNode; label: string; badge?: num
   { id: 'miniprogram',icon: <Grid3x3 className="w-[22px] h-[22px]" />, label: '小程序' },
 ]
 
-// 补充类型定义（修复 TS2304）
-type InterceptTargetType = Record<string, unknown>
+// 截流目标类型（对齐 store.videoIntercept.targets 结构，修复 unknown 类型推断）
+interface InterceptTargetType {
+  id: string
+  userName: string
+  avatar: string
+  comment: string
+  intentScore: number
+  intentReason: string
+  videoTitle: string
+  videoPlayCount: number
+  dmMessage?: string
+  dmStatus: 'pending' | 'sent' | 'replied'
+  dmRepliedAt?: string
+}
 
 export function WeChatClient() {
   const navTab = useOpsStore(s => s.clientTab)
@@ -85,10 +98,22 @@ export function WeChatClient() {
       {navTab === 'chat' && <ChatLayout />}
       {navTab === 'contacts' && <ContactsLayout />}
       {navTab === 'favorites' && <PlaceholderLayout title="收藏" icon={<Star className="w-12 h-12 text-muted-foreground" />} desc="收藏的聊天记录、文件、链接" />}
-      {navTab === 'moments' && <MomentsPanel />}
-      {navTab === 'channels' && <PlaceholderLayout title="视频号" icon={<Video className="w-12 h-12 text-muted-foreground" />} desc="视频号内容流（打包后嵌入真实视频号）" />}
+      {navTab === 'moments' && (
+        <PlatformEmbedLayout platform="wechat" title="朋友圈" icon="📸" description="微信朋友圈场控" defaultEmbed={false}>
+          <MomentsPanel />
+        </PlatformEmbedLayout>
+      )}
+      {navTab === 'channels' && (
+        <PlatformEmbedLayout platform="video" title="视频号" icon="📹" description="微信视频号内容流">
+          <PlaceholderLayout title="视频号" icon={<Video className="w-12 h-12 text-muted-foreground" />} desc="打包后嵌入真实视频号（channels.weixin.qq.com）" />
+        </PlatformEmbedLayout>
+      )}
       {navTab === 'miniprogram' && <PlaceholderLayout title="小程序" icon={<Grid3x3 className="w-12 h-12 text-muted-foreground" />} desc="我的小程序" />}
-      {navTab === 'intercept' && <InterceptLayout />}
+      {navTab === 'intercept' && (
+        <PlatformEmbedLayout platform="video" title="视频号截流" icon="⚡" description="高意向评论自动私信" defaultEmbed={false}>
+          <InterceptLayout />
+        </PlatformEmbedLayout>
+      )}
       {navTab === 'sop' && <SopPanel />}
     </div>
   )

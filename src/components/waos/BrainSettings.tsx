@@ -6,7 +6,7 @@
 //   Tab2: 逆向登录 — 豆包 / Kimi / 智谱 Cookie 扫码登录（自动识别 + 手动兜底）
 //   Tab3: 测试与统计 — 全部测试 + 降级链 + 各模型验证结果
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type Dispatch, type SetStateAction } from 'react'
 import { useOpsStore } from '@/store/useOpsStore'
 import {
   Brain, X, Check, Loader2, AlertCircle, Trash2, Zap, Cookie,
@@ -61,6 +61,7 @@ const MODELS = [
     name: 'Z.AI 内置',
     emoji: '🛡️',
     loginUrl: null,
+    proxyUrl: null,
     desc: '兜底模型，无需登录',
     priority: 5,
     ssoSteps: [],
@@ -169,7 +170,7 @@ export function BrainSettings() {
     try {
       const model = MODELS.find(m => m.id === modelId)!
       const sessionId = `user_${Date.now()}`
-      const proxyRes = await fetch(`${model.proxyUrl}?session=${sessionId}`, {
+      const proxyRes = await fetch(`${model.proxyUrl ?? ''}?session=${sessionId}`, {
         headers: { 'x-session-id': sessionId },
       })
 
@@ -349,6 +350,7 @@ export function BrainSettings() {
               onRemove={removeModelCookie}
               verifying={verifying}
               onTest={handleTest}
+              setVerifyResults={setVerifyResults}
             />
           )}
           {tab === 'login' && (
@@ -390,7 +392,7 @@ export function BrainSettings() {
 // ─── Tab1: 模型配置 ───────────────────────────────────────────
 function ConfigTab({
   modelCookies, verifyResults, editingModel, cookieDraft,
-  setEditingModel, setCookieDraft, onManualSave, onRemove, verifying, onTest,
+  setEditingModel, setCookieDraft, onManualSave, onRemove, verifying, onTest, setVerifyResults,
 }: {
   modelCookies: Record<string, string>
   verifyResults: Record<string, { valid: boolean; message: string }>
@@ -402,6 +404,7 @@ function ConfigTab({
   onRemove: (modelId: string) => void
   verifying: string | null
   onTest: (modelId: string) => void
+  setVerifyResults: Dispatch<SetStateAction<Record<string, { valid: boolean; message: string }>>>
 }) {
   return (
     <div className="space-y-3">

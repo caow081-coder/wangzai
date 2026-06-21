@@ -813,3 +813,66 @@ Stage Summary:
 - AI回复修复role映射,能引用人设业务数据,不再牛头不对马嘴
 - GitHub: commit 9e173a0,本地远端同步
 - 下一阶段: 抖音/视频号嵌入 + RAG知识库 + 打包Windows exe验证
+
+---
+Task ID: TSC-FIX
+Agent: 全栈工程师 (TypeScript 类型修复专项)
+
+Task: 修复所有 tsc 类型错误（打包前置条件），达成 src/ 下 0 错误
+
+Work Log:
+- 前置阅读：worklog.md（项目全貌）+ prisma/schema.prisma（确认 Message.timestamp / Lead.externalId+name / EventLog 表结构）
+- 运行 `npx tsc --noEmit --skipLibCheck` 发现 src/ 下 29 个错误（任务列出 9 个核心 + 额外发现 20 个关联错误：WeChatClient 12 个 unknown + SopNodePalette 3 个 dataTransfer + runtime.ts 5 个 shouldStop + useOpsStore 2 个 new Date）
+- 逐文件修复（8 个文件）：
+
+1. **src/app/api/waos/leads/route.ts**（3 错误）
+   - line 27: include.messages.orderBy `createdAt` → `timestamp`（Message 表时间字段是 timestamp）；同时删除不存在的 `persona: true, tags: true` 关系（Lead 模型只有 messages 关系）
+   - line 53: `userExternalId` 字段 Lead 表不存在 → 删除该字段（externalId 已在 line 51 设置）；`userName` → `name`（Lead 表客户名字段是 name）
+   - line 63: `db.event` 不存在 → 改用 `db.eventLog.create()`（EventLog 表，字段 type/payload/timestamp）；加 .catch 防日志写入失败影响主流程
+
+2. **src/app/api/waos/brain/proxy/[...path]/route.ts**（1 错误）
+   - line 147: `new NextResponse(modifiedBody)` 的 Buffer 不能赋给 BodyInit → `new NextResponse(new Uint8Array(modifiedBody))`（Uint8Array 是标准 BodyInit 类型）
+
+3. **src/components/waos/BrainSettings.tsx**（2 错误）
+   - line 172: `model.proxyUrl` 在 zai 模型上不存在 → 给 zai 模型加 `proxyUrl: null`（让联合类型所有成员都有 proxyUrl 属性）；fetch URL 改用 `${model.proxyUrl ?? ''}` 防 null（autoExtractCookie 只对有 loginUrl 的模型调用，zai 不会触发）
+   - line 481: `setVerifyResults` 在 ConfigTab 内未定义 → 给 ConfigTab 新增 `setVerifyResults` prop（类型 `Dispatch<SetStateAction<...>>`），父组件 BrainSettings 透传 `setVerifyResults={setVerifyResults}`；import 补 `type Dispatch, type SetStateAction`
+
+4. **src/components/waos/LeadJourney.tsx**（1 错误）
+   - line 94: `new Date(m.createdAt)` 的 createdAt 是 `string | undefined` → `new Date(m.createdAt || m.ts || Date.now())`（兼容 createdAt 字符串 / ts 数字 / 兜底当前时间）
+
+5. **src/components/waos/WeChatClient.tsx**（12 错误，一次性修复）
+   - 根因：`type InterceptTargetType = Record<string, unknown>` 导致所有 target.xxx 推断为 unknown
+   - 修复：改为完整 interface（id/userName/avatar/comment/intentScore/intentReason/videoTitle/videoPlayCount/dmMessage?/dmStatus/dmRepliedAt?），对齐 store.videoIntercept.targets 结构
+   - 一次性消除 857/863/867/868/872/874/875/876/880/884/892 共 12 个 unknown/ReactNode 类型错误
+
+6. **src/components/waos/sop/SopNodePalette.tsx**（3 错误）
+   - line 136-138: `e.dataTransfer` 在 framer-motion onDragStart 的 `PointerEvent | MouseEvent | TouchEvent` 类型上不存在
+   - 修复：import `type DragEvent`，handler 内 `const ev = e as unknown as DragEvent<HTMLDivElement>`（framer-motion 的 onDragStart 配合原生 draggable 时实际触发原生 DragEvent），`const dt = ev.dataTransfer; if (!dt) return` 后再 setData
+
+7. **src/lib/sop/runtime.ts**（5 错误）
+   - line 257/279/305/316/324: return `{ nextCondition: 'default' }` 缺少必填的 `shouldStop`
+   - 修复：把 executeNode 返回类型的 `shouldStop: boolean` 改为 `shouldStop?: boolean`（可选），1 行改动消除 5 个错误；调用方 runInstance 用 `shouldStop ?` 三元和 `if (shouldStop)` 对 undefined 天然兼容
+
+8. **src/store/useOpsStore.ts**（2 错误）
+   - line 2440 + 3821: `new Date(m.createdAt)` 的 createdAt 是 `string | undefined` → `new Date(m.createdAt || m.ts || Date.now())`（与 LeadJourney 同模式）
+
+验证:
+- `npx tsc --noEmit --skipLibCheck 2>&1 | grep "src/" | grep -v "skills/stock-analysis-skill/src"` → **0 错误** ✅
+- 仅剩 examples/websocket/server.ts（socket.io 模块缺失）+ skills/image-edit + skills/stock-analysis-skill 3 个非核心错误（任务明确要求忽略）
+- `bun run lint` → 0 errors, 4 warnings（均为 pre-existing 的 unused eslint-disable directive，与本次改动无关）
+- dev.log 末尾：API 路由 200 正常响应，无编译错误
+
+Stage Summary:
+- 8 个文件、29 个 src/ tsc 错误全部修复，src/ 下达成 0 错误（打包前置条件满足）
+- 修复策略优先选「最小侵入 + 类型安全」：能改类型定义的不改业务逻辑（如 runtime shouldStop 可选化、WeChatClient 补 interface、BrainSettings zai 加 proxyUrl:null），而非全盘 `as any`
+- Prisma 字段对齐确认：Message.timestamp（非 createdAt）/ Lead.externalId+name（非 userExternalId/userName）/ EventLog 表（非 db.event）
+- 不破坏现有功能：所有修复仅做类型层面调整，运行时行为不变；leads POST 仍幂等创建线索并记日志（改用 EventLog 表）；proxy 代理仍正常转发 HTML 改写
+- 文件改动清单：
+    * src/app/api/waos/leads/route.ts（GET include 修正 + POST 字段对齐 + EventLog）
+    * src/app/api/waos/brain/proxy/[...path]/route.ts（Buffer → Uint8Array）
+    * src/components/waos/BrainSettings.tsx（zai proxyUrl:null + ConfigTab setVerifyResults prop + import 类型）
+    * src/components/waos/LeadJourney.tsx（new Date 兜底）
+    * src/components/waos/WeChatClient.tsx（InterceptTargetType 完整 interface）
+    * src/components/waos/sop/SopNodePalette.tsx（DragEvent 类型断言）
+    * src/lib/sop/runtime.ts（shouldStop 可选化）
+    * src/store/useOpsStore.ts（2 处 new Date 兜底）

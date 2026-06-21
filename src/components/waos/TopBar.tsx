@@ -21,7 +21,7 @@
 import { useOpsStore } from '@/store/useOpsStore'
 import {
   Bell, Settings, ChevronDown, Flame, Search, Power,
-  Sun, Moon, Monitor, Brain, MessageCircle, Pencil,
+  Sun, Moon, Monitor, Brain, MessageCircle, Pencil, Store,
 } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -41,6 +41,7 @@ export function TopBar() {
   const openSettings = useOpsStore(s => s.openSettings)
   const openNotifications = useOpsStore(s => s.openNotifications)
   const openPersonaEditor = useOpsStore(s => s.openPersonaEditor)
+  const openPersonaMarket = useOpsStore(s => s.openPersonaMarket)
   const setBrainOpen = useOpsStore(s => s.setBrainOpen)
   const modelCookies = useOpsStore(s => s.modelCookies)
   const wechatReal = useOpsStore(s => s.wechatReal)
@@ -116,7 +117,7 @@ export function TopBar() {
                   {p.id === activePersonaId && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-2 shrink-0" />}
                 </button>
               ))}
-              {/* 编辑人设入口 + 新建人设入口 */}
+              {/* 编辑人设入口 + 新建人设入口 + 模板市场入口 */}
               <div className="border-t border-border/60 mt-1 pt-1">
                 <button
                   onClick={() => { openPersonaEditor(activePersona?.id ?? null); setPersonaMenuOpen(false) }}
@@ -131,6 +132,13 @@ export function TopBar() {
                 >
                   <span className="text-[12px] leading-none">＋</span>
                   ✨ 新建人设
+                </button>
+                <button
+                  onClick={() => { openPersonaMarket(); setPersonaMenuOpen(false) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 transition-colors apple-btn"
+                >
+                  <Store className="w-3 h-3" />
+                  📋 模板市场
                 </button>
               </div>
             </div>

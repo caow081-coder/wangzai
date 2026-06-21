@@ -8,6 +8,7 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Flame, Bot, Radio, Clock, TrendingUp, Lock, X, Shield, Zap, Cpu,
   AlertTriangle, Send, Heart, MessageSquare, Image as ImageIcon, Mic,
@@ -17,8 +18,16 @@ import {
 import { SchedulerView, MetricsView, FunnelView, AbView } from './RightPanel'
 import { useState } from 'react'
 import { toast } from 'sonner'
+import {
+  Activity as ActivityIcon, Filter as FilterIcon, TrendingUp as TrendingUpIcon,
+  Users as UsersIcon, Trophy as TrophyIcon, Bot as BotIcon,
+} from 'lucide-react'
+import {
+  Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts'
 
-type Panel = 'scheduler' | 'ai' | 'channel' | 'lifecycle' | 'attribution' | 'infra' | 'metrics' | 'funnel' | 'ab' | 'audit' | 'llm' | 'crm'
+type Panel = 'scheduler' | 'ai' | 'channel' | 'lifecycle' | 'attribution' | 'infra' | 'metrics' | 'funnel' | 'ab' | 'audit' | 'llm' | 'crm' | 'dashboard'
 
 // 通俗命名 + 介绍
 const TABS: { id: Panel; label: string; icon: React.ReactNode; module: string; desc: string }[] = [
@@ -31,6 +40,7 @@ const TABS: { id: Panel; label: string; icon: React.ReactNode; module: string; d
   { id: 'infra',      label: '系统健康',   icon: <Lock className="w-3.5 h-3.5" />,       module: '6', desc: '事件总线/锁/监控' },
   { id: 'metrics',    label: '数据看板',   icon: <Activity className="w-3.5 h-3.5" />,   module: '6', desc: '实时指标' },
   { id: 'funnel',     label: '转化漏斗',   icon: <Filter className="w-3.5 h-3.5" />,     module: '5', desc: '从曝光到成交' },
+  { id: 'dashboard',  label: '效果分析',   icon: <Activity className="w-3.5 h-3.5" />,   module: '5', desc: '转化漏斗 + 人设CVR + 渠道分布 + 趋势' },
   { id: 'ab',         label: 'AB 实验',    icon: <GitBranch className="w-3.5 h-3.5" />,  module: '5', desc: '人设/话术对比' },
   { id: 'audit',      label: '操作记录',   icon: <Shield className="w-3.5 h-3.5" />,     module: '6', desc: '谁做了什么' },
   { id: 'crm',        label: 'CRM 线索',  icon: <Database className="w-3.5 h-3.5" />,   module: '8', desc: '线索表 + 乐观锁' },
@@ -88,6 +98,7 @@ export function ProDrawer() {
           {panel === 'llm' && <LLMProviderPanel />}
           {panel === 'metrics' && <MetricsView />}
           {panel === 'funnel' && <FunnelView />}
+          {panel === 'dashboard' && <DashboardInlineView />}
           {panel === 'ab' && <AbView />}
           {panel === 'audit' && <AuditPanel />}
           {panel === 'crm' && <CrmPanel />}
@@ -1165,6 +1176,233 @@ function InfraStat({ label, value, tone }: { label: string; value: number; tone:
     <div className="p-2 rounded-lg bg-secondary/50 text-center">
       <div className={`text-[16px] font-bold font-mono ${color}`}>{value}</div>
       <div className="text-[9px] text-muted-foreground mt-0.5">{label}</div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 模块5: DashboardInlineView — 效果分析（嵌入 ProDrawer 的精简版）
+// ═══════════════════════════════════════════════════════════════════
+// 完整版看板在 src/components/waos/DashboardPanel.tsx（独立 Dialog）。
+// 这里提供一个适合 600px 抽屉宽度的精简版，包含：
+//  - 转化漏斗（4 阶段）
+//  - 各人设 CVR 柱状图
+//  - 渠道分布饼图
+//  - AI vs 人工占比
+//  - "打开完整数据看板" 按钮（调用 openDashboardPanel）
+//  - TOP 销售排行（前 3）
+function DashboardInlineView() {
+  const leads = useOpsStore(s => s.leads)
+  const personas = useOpsStore(s => s.personas)
+  const metrics = useOpsStore(s => s.metrics)
+  const openDashboardPanel = useOpsStore(s => s.openDashboardPanel)
+
+  // 转化漏斗
+  const funnel = [
+    { name: '新客', count: leads.filter(l => l.stage === 'new' || l.stage === 'engaged').length || 1, color: '#22d3ee' },
+    { name: '跟进中', count: leads.filter(l => l.stage === 'warm' || l.stage === 'qualified' || l.stage === 'cold').length || 1, color: '#f59e0b' },
+    { name: '高意向', count: leads.filter(l => l.stage === 'hot').length || 1, color: '#f43f5e' },
+    { name: '已成交', count: leads.filter(l => l.stage === 'converted' || l.alreadyCustomer).length || 1, color: '#10b981' },
+  ]
+  const maxFunnel = Math.max(...funnel.map(f => f.count), 1)
+  const overallCvr = (funnel[3].count / (funnel[0].count || 1)) * 100
+
+  // 人设 CVR（按 CVR 降序取前 6）
+  const personaCvrData = [...personas]
+    .sort((a, b) => b.cvr - a.cvr)
+    .slice(0, 6)
+    .map(p => ({
+      name: p.shortName.length > 6 ? p.shortName.slice(0, 5) + '…' : p.shortName,
+      cvr: Math.round(p.cvr * 100),
+      color: p.color,
+    }))
+
+  // 渠道分布
+  const channelCounts: Record<string, number> = { wechat_dm: 0, douyin: 0, video: 0, comment: 0 }
+  leads.forEach(l => {
+    if (channelCounts[l.source] !== undefined) channelCounts[l.source]++
+    else channelCounts.comment++
+  })
+  const channelData = [
+    { name: '微信', value: channelCounts.wechat_dm, color: '#10b981' },
+    { name: '抖音', value: channelCounts.douyin, color: '#f43f5e' },
+    { name: '视频号', value: channelCounts.video, color: '#8b5cf6' },
+    { name: '评论/朋友圈', value: channelCounts.comment, color: '#f59e0b' },
+  ].filter(d => d.value > 0)
+
+  // AI vs 人工
+  let aiCount = 0
+  let humanCount = 0
+  leads.forEach(l => (l.messages || []).forEach(m => {
+    if (m.role === 'ai' || m.role === 'assistant') aiCount++
+    else if (m.role === 'human' || m.role === 'operator') humanCount++
+  }))
+  if (aiCount === 0 && humanCount === 0) {
+    aiCount = metrics.llmCalls || 1
+    humanCount = metrics.humanHandoffs || 0
+  }
+  const replyRatio = [
+    { name: 'AI', value: aiCount, color: '#06b6d4' },
+    { name: '人工', value: humanCount || 1, color: '#a16207' },
+  ]
+
+  // TOP 3
+  const top3 = [...personas].sort((a, b) => b.cvr - a.cvr).slice(0, 3)
+
+  const tooltipStyle = {
+    backgroundColor: 'oklch(0.13 0 0)',
+    border: '1px solid oklch(1 0 0 / 12%)',
+    borderRadius: '6px',
+    fontSize: '11px',
+    fontFamily: 'ui-monospace, monospace',
+    color: 'oklch(0.95 0 0)',
+  }
+  const axisStyle = { fontSize: 10, fontFamily: 'ui-monospace, monospace' as const, fill: 'oklch(0.55 0 0)' }
+
+  return (
+    <div className="p-3 space-y-3">
+      <ModuleIntro num="5" title="效果分析（精简版）" desc="转化漏斗 / 人设 CVR / 渠道分布 / AI 占比 / TOP 销售排行" />
+
+      {/* 打开完整看板按钮 */}
+      <div className="flex items-center justify-between p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/30">
+        <div>
+          <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">📊 完整数据看板</div>
+          <div className="text-[10px] text-muted-foreground">含 7 天趋势折线图 + SOP 执行统计 + TOP 5 排行</div>
+        </div>
+        <Button size="sm" onClick={() => openDashboardPanel()} className="h-7 text-[11px]">
+          <ActivityIcon className="w-3 h-3 mr-1" /> 打开
+        </Button>
+      </div>
+
+      {/* 4 个 KPI */}
+      <div className="grid grid-cols-4 gap-2">
+        <KpiBox label="总线索" value={leads.length} />
+        <KpiBox label="高意向" value={metrics.hotCount} tone="hot" />
+        <KpiBox label="已成交" value={metrics.converted} tone="good" />
+        <KpiBox label="CVR" value={`${overallCvr.toFixed(1)}%`} tone="emerald" />
+      </div>
+
+      {/* 转化漏斗 */}
+      <Section title="转化漏斗 · 4 阶段" icon={<FilterIcon className="w-3 h-3 text-purple-400" />}>
+        <div className="space-y-1.5">
+          {funnel.map((stage, idx) => {
+            const widthPct = (stage.count / maxFunnel) * 100
+            const prev = idx > 0 ? funnel[idx - 1].count : stage.count
+            const conv = idx > 0 && prev > 0 ? (stage.count / prev) * 100 : 100
+            return (
+              <div key={stage.name}>
+                <div className="flex items-center justify-between text-[10px] font-mono mb-0.5">
+                  <span className="text-muted-foreground">{stage.name}</span>
+                  <span className="text-foreground">
+                    {stage.count}
+                    {idx > 0 && <span className="ml-1.5 text-muted-foreground/70">({conv.toFixed(0)}%)</span>}
+                  </span>
+                </div>
+                <div className="h-4 bg-muted/40 rounded-sm overflow-hidden">
+                  <div
+                    className="h-full transition-all duration-500"
+                    style={{ width: `${Math.max(4, widthPct)}%`, background: `linear-gradient(90deg, ${stage.color}88, ${stage.color})` }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </Section>
+
+      {/* 人设 CVR 柱状图 */}
+      <Section title="各人设成交率" icon={<TrophyIcon className="w-3 h-3 text-amber-400" />}>
+        <ResponsiveContainer width="100%" height={140}>
+          <BarChart data={personaCvrData} margin={{ top: 5, right: 10, bottom: 0, left: -20 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 6%)" />
+            <XAxis dataKey="name" tick={axisStyle} tickLine={false} axisLine={false} interval={0} angle={-15} textAnchor="end" height={36} />
+            <YAxis tick={axisStyle} tickLine={false} axisLine={false} width={28} unit="%" />
+            <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'oklch(1 0 0 / 4%)' }} formatter={(v: number) => [`${v}%`, 'CVR']} />
+            <Bar dataKey="cvr" radius={[3, 3, 0, 0]}>
+              {personaCvrData.map((entry, idx) => (
+                <Cell key={idx} fill={entry.color} fillOpacity={0.85} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </Section>
+
+      {/* 渠道 + AI 占比 并排 */}
+      <div className="grid grid-cols-2 gap-2">
+        <Section title="渠道分布" icon={<Radio className="w-3 h-3 text-rose-400" />}>
+          {channelData.length === 0 ? (
+            <div className="h-[120px] flex items-center justify-center text-[10px] text-muted-foreground">暂无数据</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={120}>
+              <PieChart>
+                <Pie data={channelData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={45} innerRadius={25} paddingAngle={2}>
+                  {channelData.map((entry, idx) => (
+                    <Cell key={idx} fill={entry.color} fillOpacity={0.85} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={tooltipStyle} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </Section>
+        <Section title="AI vs 人工" icon={<BotIcon className="w-3 h-3 text-cyan-400" />}>
+          <ResponsiveContainer width="100%" height={120}>
+            <PieChart>
+              <Pie data={replyRatio} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={45} innerRadius={25} paddingAngle={2}>
+                {replyRatio.map((entry, idx) => (
+                  <Cell key={idx} fill={entry.color} fillOpacity={0.85} />
+                ))}
+              </Pie>
+              <Tooltip contentStyle={tooltipStyle} />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="flex justify-around text-[9px] font-mono mt-1">
+            {replyRatio.map(r => (
+              <span key={r.name} className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: r.color }} />
+                {r.name} {r.value}
+              </span>
+            ))}
+          </div>
+        </Section>
+      </div>
+
+      {/* TOP 3 销售排行 */}
+      <Section title="TOP 3 销售" icon={<TrophyIcon className="w-3 h-3 text-amber-400" />}>
+        <div className="space-y-1.5">
+          {top3.map((p, idx) => {
+            const rankIcon = idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'
+            return (
+              <div key={p.id} className="flex items-center gap-2 p-1.5 rounded-lg bg-secondary/50">
+                <span className="text-[14px]">{rankIcon}</span>
+                <span className="text-base">{p.avatar}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] font-semibold truncate">{p.name}</div>
+                  <div className="text-[9px] text-muted-foreground">活跃 {p.active}/{p.capacity}</div>
+                </div>
+                <span className="text-[14px] font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                  {(p.cvr * 100).toFixed(0)}%
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </Section>
+    </div>
+  )
+}
+
+function KpiBox({ label, value, tone = 'default' }: { label: string; value: number | string; tone?: 'default' | 'hot' | 'good' | 'emerald' }) {
+  const toneClass = {
+    default: 'text-foreground',
+    hot: 'text-rose-500',
+    good: 'text-emerald-500',
+    emerald: 'text-emerald-600 dark:text-emerald-400',
+  }[tone]
+  return (
+    <div className="px-2 py-1.5 rounded-lg bg-secondary/50 border border-border/60 text-center">
+      <div className="text-[9px] text-muted-foreground uppercase font-mono mb-0.5">{label}</div>
+      <div className={`text-[16px] font-bold font-mono ${toneClass}`}>{value}</div>
     </div>
   )
 }

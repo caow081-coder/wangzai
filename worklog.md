@@ -913,3 +913,144 @@ Stage Summary:
 - Windows打包命令: bun run electron:build
 - GitHub: commit 5238c2c,本地远端同步
 - 下一阶段: Windows端打包exe验证真实嵌入 + RAG知识库 + 更多人设模板
+
+---
+Task ID: BUILD-GUIDE
+Agent: DevOps Engineer
+Task: Windows 打包脚本优化 + 完整打包指南
+
+Work Log:
+- 阅读 worklog.md / package.json / electron/main.js(1-260行) / electron/stream-service.js / scripts/copy-assets.js / .env，确认打包链路与缺失项
+- 发现问题：
+  1. copy-assets.js 仅复制 .next/static 与 public，缺 prisma / db / electron
+  2. package.json build.files 未包含 prisma/** / db/**
+  3. win.icon 指向 public/wangcai-logo.png（173×166，不满足 electron-builder ≥256×256 要求）
+  4. 缺 extraResources 配置，db 在 asar 内只读无法 SQLite 写入
+  5. asar 默认 true，spawn('node', ['server.js']) 无法进入 asar 虚拟 FS 导致生产模式启动失败
+- 优化 scripts/copy-assets.js（21 行 → 132 行）：
+  * 增加 5 个复制任务：.next/static / public / prisma / db / electron
+  * 全程 path.join，跨 Windows/Linux/macOS 兼容
+  * prisma 排除 migrations/ 与 migration_lock.toml（运行时不需要）
+  * electron 排除 build/ 子目录（electron-builder 临时产物）
+  * 源目录不存在打印 [skip] 警告并跳过，不抛异常
+  * standalone 不存在直接 process.exit(1) 报错退出
+  * 兜底：standalone/package.json 缺失时从根目录复制
+  * 完整 try/catch 包裹，异常带堆栈退出
+  * 中文注释 + 进度日志
+- 实测：node scripts/copy-assets.js → 5/5 成功，standalone 下 db/custom.db (290KB) / prisma/schema.prisma / electron/{main,preload,sandbox,stream-service,ui-actuation}.js + preloads/ 全部就位
+- 优化 package.json build 配置：
+  * asar: false（关键！解决 spawn node server.js 无法读 asar 的根本问题）
+  * files 增加 prisma/**, db/**, 排除 electron/build/**, .DS_Store, node_modules 内 README/test 等冗余
+  * extraResources: db → resources/db, prisma → resources/prisma（安装目录外的可读副本）
+  * win.icon 改用 electron/build/icon.png（512×512 RGBA PNG，符合要求）
+  * win.target 改为对象数组形式 { target: 'nsis', arch: ['x64'] }
+  * win.artifactName = "旺财 Setup ${version}.${ext}"（产物中文化）
+  * win.publisherName + verifyUpdateCodeSignature: false（避免未签名警告阻塞）
+  * directories.buildResources = "electron/build"
+  * nsis 增强：installerIcon / uninstallerIcon / installerHeaderIcon 全用 512×512 icon
+  * nsis.createStartMenuShortcut: true（开始菜单快捷方式）
+  * nsis.uninstallDisplayName: "旺财 ${version}"（控制面板显示）
+  * nsis.deleteAppDataOnUninstall: false（卸载保留用户数据）
+  * nsis.language: 2052（简体中文 0x0804）
+  * publish: null（避免意外推送 GitHub Releases）
+  * copyright 字段
+- 创建 docs/BUILD.md（648 行，8 大章节 + 附录）：
+  * 1. 环境准备：Node 18+ / Bun 1.0+ / Win10+ / Git，含 Bun 安装命令与系统检查
+  * 2. 开发模式：clone / bun install / db:push / dev / electron:dev 双终端
+  * 3. 打包 exe：一键 bun run electron:build，产物路径，打包时长预期表
+  * 4. 流程详解：next build / copy-assets.js / electron-builder 三步配置逐字段解读
+  * 5. 安装后验证：安装步骤 + 目录结构 + 10 项功能验证清单 + 端口检查命令
+  * 6. FAQ 8 问：端口 3000/3003 占用、微信登录失败、AI 无响应、打包失败通用排查 + 7 种具体错误码、体积优化、SQLite 写权限、卸载行为
+  * 7. 生产配置：.env 三变量、数据库路径四场景对比表、日志路径、端口规划、安全建议
+  * 8. 更新版本：semver 规范 + Git tag 流程 + 自动更新未来增强方案
+  * 附录 A.1/A.2/A.3：release 目录 + 安装目录 + 用户数据目录三层产物结构
+- 验证：
+  * node -e "JSON.parse(readFileSync('package.json'))" → ✅ JSON 合法
+  * node scripts/copy-assets.js → ✅ 5/5 成功
+  * wc -l docs/BUILD.md → 648 行
+  * ls .next/standalone/{db,prisma,electron,public,.next/static} → ✅ 全部就位
+
+Stage Summary:
+- 改动文件 3 个：
+  1. scripts/copy-assets.js（21 → 132 行，新增 prisma/db/electron 复制 + 错误处理）
+  2. package.json（build 配置全面优化：asar=false、extraResources、512×512 icon、nsis 完整化）
+  3. docs/BUILD.md（新建，648 行，8 大章节完整打包指南）
+- 关键决策：
+  1. asar=false：根因解决——Next.js standalone server.js 需被真实 Node 进程 spawn 启动，asar 虚拟 FS 不可被 spawn chdir。代价是产物略大、文件裸露，但可靠性优先。
+  2. db 同时进 files + extraResources：files 让 standalone 内的 server.js 找到 ./db/custom.db；extraResources 在 resources/db 提供可读副本，供未来迁移到 userData 时复用。
+  3. icon 改用 electron/build/icon.png（512×512）：原 public/wangcai-logo.png 仅 173×166 会被 electron-builder 拒绝。
+  4. nsis.language=2052 + displayLanguageSelector=false：固定简体中文，避免英文界面。
+  5. publish=null：当前不做自动更新，避免误传 GitHub Releases。
+- 跨平台兼容：copy-assets.js 全用 path.join；package.json build 配置无平台耦合；BUILD.md 命令同时给 bash 与 PowerShell 语法（少量 PowerShell 特例用 powershell 块标注）。
+- 下一阶段建议：
+  1. 在 main.js 中增加首启动迁移逻辑：将 resources/app/.next/standalone/db/custom.db 复制到 %APPDATA%/wangcai/db/，DATABASE_URL 改指向后者，彻底解决写权限问题
+  2. 集成 electron-log，日志写入 %APPDATA%/wangcai/logs/
+  3. 配置 GitHub Releases 自动更新（publish + electron-updater）
+  4. 用 electron-builder 的Portable target 产出绿色版（免安装）
+  5. Windows 端真实打包验证（当前为 Linux 沙箱，无法跑 electron-builder --win）
+
+---
+Task ID: TEMPLATE-DASHBOARD
+Agent: full-stack-developer
+Task: 旺财两大功能并行开发 — 人设模板市场（导入/导出/分享） + 数据看板（转化漏斗 + 效果分析）
+
+Work Log:
+- 前置阅读 5 份关键文件：worklog.md（项目状态澄清）/ useOpsStore.ts 第 141-233 行（Persona 接口完整结构）/ PersonaEditor.tsx 前 50 行（5 Tabs 编辑器）/ ProDrawer.tsx 前 80 行（12 Tab 控制台）/ Charts.tsx 前 50 行（recharts 配色与样式）
+- 抽样阅读 useOpsStore.ts 第 760-776 行（OpsState 接口尾部）、2700-2960 行（savePersona/createPersona/duplicatePersona/hydratePersonas 实现）确认人设 CRUD 已存在但缺少导出/导入/分享方法
+- 功能 A：人设模板市场
+  - 在 src/store/useOpsStore.ts 新增 PERSONA_TEMPLATES 常量（8 个完整模板，约 460 行）：5 个镜像现有种子人设（销冠/逼单/售后/运营/市场）+ 3 个全新（新能源专员林星辰 EQE/EQS/EQA、性能车顾问陆擎峰 AMG 全系 80-300 万、二手车评估师老周 星睿认证 20-80 万）
+  - 新增 PersonaTemplate 类型定义（含 templateId/category/business/contact/skillConfig/styleExtends 全字段）
+  - 新增 store 方法：openPersonaMarket / closePersonaMarket / exportPersona（剥离 id/active/optimizationScore 返回 JSON 字符串）/ importPersona（normalizePersona 兜底，返回新 ID 或 null）/ applyPersonaTemplate（从模板拷贝）/ generateShareCode（base64+encodeURIComponent 处理中文）/ importFromShareCode
+  - 新增辅助函数：findTemplate / sanitizePersonaForExport / normalizePersona / encodeShareCode / decodeShareCode
+  - 新增状态字段：personaMarketOpen + dashboardPanelOpen（Dialog 开关）
+  - 创建 src/components/waos/PersonaMarket.tsx（508 行）：
+    * Dialog 全屏弹窗 max-w-6xl
+    * 顶部工具条：导入 JSON 按钮（隐藏 input file）/ 分享码输入区 / 分类筛选（全部/销售/售后/运营/市场/新能源/性能车/二手车）
+    * 3 列卡片网格展示模板（Framer Motion 错峰入场动画）
+    * 每个卡片：渐变头像 + 名称 + 角色徽章 + 分类徽章 + 成交率 + 车型标签（含主推）+ 价格区间 + 核心技能（前 3）+ 应用/导出按钮
+    * 底部"我的人设"列表：每条显示头像/名称/角色徽章/车型 + 导出/复制/分享码三个图标按钮
+    * AnimatePresence 折叠的分享码输出区（textarea + 一键复制到剪贴板）
+  - 在 PersonaEditor.tsx Footer 新增"📋 模板市场"按钮（emerald 配色，与"新建/复制/删除"并排）
+  - 在 TopBar.tsx 人设下拉菜单新增"📋 模板市场"入口（emerald 配色，与"编辑当前人设/新建人设"并排）
+- 功能 B：数据看板（转化漏斗 + 效果分析）
+  - 创建 src/components/waos/DashboardPanel.tsx（681 行）独立 Dialog：
+    * Header：标题 + "刷新 SOP 数据"按钮（拉取 /api/waos/sop?view=instances）
+    * 4 个 KPI 概览：总线索 / 高意向 / 已成交 / 整体 CVR%
+    * Card 1 转化漏斗：新客 → 跟进中 → 高意向 → 已成交，每阶段数量 + 阶段间转化率，Framer Motion 渐入宽度动画，整体 CVR 汇总
+    * Card 2 各人设成交率对比（BarChart，按 CVR 降序，LabelList 显示百分比，Cell 用 persona.color）
+    * Card 3 各渠道线索量饼图（PieChart inner+outer radius，微信翠绿/抖音玫瑰/视频号紫/评论琥珀）
+    * Card 4 AI 回复 vs 人工回复（PieChart + 右侧图例百分比，从 leads.messages.role 统计，兜底用 metrics.llmCalls/humanHandoffs）
+    * Card 5 SOP 执行统计：成功率/失败率/平均耗时（带进度条，从 /api/waos/sop?view=instances 拉 200 条实例计算）
+    * Card 6 近 7 天线索量 + 成交量趋势（LineChart 双线，按 leads.createdAt 聚合，metricsHistory 兜底）
+    * Card 7 TOP 销售排行榜（前 5，🥇🥈🥉 + 活跃/容量 + CVR%）
+  - 在 ProDrawer.tsx 新增 'dashboard' tab "效果分析"（位于转化漏斗和 AB 实验之间）
+  - 创建 DashboardInlineView 精简版（适合 600px 抽屉宽度）：
+    * "打开完整数据看板"按钮 → 调用 openDashboardPanel() 启动独立 Dialog
+    * 4 KPI + 转化漏斗 + 人设 CVR 柱状图 + 渠道/AI 占比并排饼图 + TOP 3 排行
+  - 在 ProDrawer 顶部新增 imports：recharts (Bar/BarChart/CartesianGrid/Cell/Line/LineChart/Pie/PieChart/ResponsiveContainer/Tooltip/XAxis/YAxis) + lucide-react (ActivityIcon/FilterIcon/TrendingUpIcon/UsersIcon/TrophyIcon/BotIcon) + Button
+- 集成验证：
+  - src/app/page.tsx 新增 PersonaMarket + DashboardPanel 渲染（在 PersonaEditor 之后、ProDrawer 之前）
+  - bun run lint：0 errors, 4 warnings（4 个 warning 均为既有文件 BrainSettings/Splashscreen/TopBar 的 Unused eslint-disable，与本次改动无关）
+  - dev server 实测：GET / 200 in 421ms（页面正常渲染），GET /api/waos/sop?view=instances&limit=200 200（SOP API 真实返回实例数据，含 "高意向客户成交 SOP" completed 实例）
+
+Stage Summary:
+- 产出文件清单：
+  * src/store/useOpsStore.ts（4519 行，原 3861 行，+658 行）：PERSONA_TEMPLATES 8 模板 + PersonaTemplate 类型 + 6 个新 store 方法 + 4 个辅助函数 + 2 个新状态字段
+  * src/components/waos/PersonaMarket.tsx（508 行，新建）：模板市场 Dialog，3 列卡片网格 + 导入/导出/分享码全流程
+  * src/components/waos/DashboardPanel.tsx（681 行，新建）：完整数据看板 Dialog，7 个图表卡片 + SOP API 拉取
+  * src/components/waos/ProDrawer.tsx（1408 行，原 1171 行，+237 行）：新增 'dashboard' tab + DashboardInlineView 精简版 + KpiBox 组件
+  * src/components/waos/PersonaEditor.tsx（841 行，原 837 行，+4 行）：Footer 新增"模板市场"按钮 + Store icon 导入
+  * src/components/waos/TopBar.tsx（356 行，原 350 行，+6 行）：人设下拉新增"模板市场"入口 + Store icon 导入
+  * src/app/page.tsx（74 行，原 70 行，+4 行）：渲染 PersonaMarket + DashboardPanel
+  * 合计新增约 2090 行业务代码
+- 关键决策：
+  1. PERSONA_TEMPLATES 设计为"业务字段优先"——存 name/business/contact/skillConfig/styleExtends，personality/tone/extendedActions 用 normalizePersona 兜底默认值，避免模板过于臃肿又能保证应用后人设完整可用
+  2. 导出格式带 __type: 'waos-persona-v1' 标记，导入时同时兼容封装对象和裸 Persona 对象两种格式，便于第三方工具直接生成
+  3. 分享码用 btoa(unescape(encodeURIComponent(json))) 处理 UTF-8 中文，Node 端兜底用 Buffer.from(...).toString('base64')，避免中文乱码
+  4. SOP 执行统计通过 /api/waos/sop?view=instances&limit=200 拉真实数据（已实测 200 OK 返回 completed 实例），失败时返回空数组兜底不阻塞渲染
+  5. DashboardPanel 设计为独立 Dialog（max-w-7xl），同时在 ProDrawer 提供 600px 适配的 DashboardInlineView 精简版，双入口兼顾全屏看板与抽屉快速预览
+  6. 转化漏斗用纯 CSS 渐变 + Framer Motion 宽度动画实现（不用 recharts 是因为漏斗 4 阶段水平条带更适合自定义布局，可读性更高）
+  7. 渠道分布饼图 inner+outer radius 做成环形图，标签外置避免遮挡；AI vs 人工则配右侧图例 + 百分比
+  8. 7 天趋势用 leads.createdAt 按天聚合，若种子数据时间集中则用 metricsHistory 末尾 7 个点兜底
+  9. TOP 销售排行用 personas.cvr 排序，前 3 名加 🥇🥈🥉 emoji + 渐变背景，4-5 名纯数字排名
+  10. 所有图表配色避开 indigo/blue，主色用 emerald/teal/cyan/amber/rose/purple，与项目既有 Charts.tsx 的配色体系一致

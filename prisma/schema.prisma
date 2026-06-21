@@ -203,3 +203,22 @@ model SkillRegistry {
 
   @@index([category, isActive])
 }
+
+// ─── RAG 知识库（奔驰销售知识库）─────────────────
+model KnowledgeDoc {
+  id          String   @id @default(cuid())
+  title       String
+  content     String   // 原文内容
+  category    String   @default("车型") // 车型 | 配置 | 价格 | 金融 | 保养 | 试驾 | 竞品 | FAQ
+  tags        String   @default("[]")  // JSON 数组
+  keywords    String   @default("")   // 空格分隔的关键词（用于全文检索）
+  vector      String?  // JSON 向量（简化版：TF-IDF 或 hash，生产用 embeddings）
+  source      String   @default("manual") // manual | imported | official
+  priority    Int      @default(50)  // 优先级 0-100，高优先级匹配先返回
+  hitCount    Int      @default(0)   // 被检索命中次数
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@index([priority])
+}

@@ -17,20 +17,67 @@
   "build": {
     "appId": "com.wangcai.desktop",
     "productName": "旺财",
+    "copyright": "Copyright © 2026 旺财 WAOS",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "electron/build"
     },
-    "files": ["electron/**/*", ".next/standalone/**/*", ".next/static/**/*", "public/**/*", "package.json"],
+    "asar": false,
+    "files": [
+      "electron/**/*",
+      "!electron/build/**",
+      ".next/standalone/**/*",
+      ".next/static/**/*",
+      "public/**/*",
+      "prisma/**/*",
+      "db/**/*",
+      "package.json",
+      "!**/.DS_Store",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}"
+    ],
+    "extraResources": [
+      {
+        "from": "db",
+        "to": "db",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "prisma",
+        "to": "prisma",
+        "filter": ["**/*"]
+      }
+    ],
     "win": {
-      "target": "nsis",
-      "icon": "public/wangcai-logo.png"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "electron/build/icon.png",
+      "artifactName": "旺财 Setup ${version}.${ext}",
+      "publisherName": "Wangcai WAOS",
+      "verifyUpdateCodeSignature": false
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
+      "installerIcon": "electron/build/icon.png",
+      "uninstallerIcon": "electron/build/icon.png",
+      "installerHeaderIcon": "electron/build/icon.png",
       "createDesktopShortcut": true,
-      "shortcutName": "旺财"
-    }
+      "createStartMenuShortcut": true,
+      "shortcutName": "旺财",
+      "uninstallDisplayName": "旺财 ${version}",
+      "deleteAppDataOnUninstall": false,
+      "displayLanguageSelector": false,
+      "language": "2052"
+    },
+    "publish": null
   },
   "dependencies": {
     "@hookform/resolvers": "^5.1.1",

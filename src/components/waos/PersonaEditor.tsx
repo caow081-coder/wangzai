@@ -34,7 +34,7 @@ import {
 } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import {
-  User, Car, Phone, Cpu, MessageSquare, Plus, Copy, Trash2, Check, Sparkles, X,
+  User, Car, Phone, Cpu, MessageSquare, Plus, Copy, Trash2, Check, Sparkles, X, Store,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useState, useMemo } from 'react'
@@ -95,7 +95,7 @@ export function PersonaEditor() {
   const close = useOpsStore(s => s.closePersonaEditor)
   const personas = useOpsStore(s => s.personas)
 
-  // ─── CRUD 方法 ───
+  // CRUD 方法
   const updateBusiness = useOpsStore(s => s.updatePersonaBusiness)
   const updateContact = useOpsStore(s => s.updatePersonaContact)
   const toggleSkill = useOpsStore(s => s.togglePersonaSkill)
@@ -106,6 +106,8 @@ export function PersonaEditor() {
   const createPersona = useOpsStore(s => s.createPersona)
   const duplicatePersona = useOpsStore(s => s.duplicatePersona)
   const deletePersona = useOpsStore(s => s.deletePersona)
+  // 模板市场入口
+  const openPersonaMarket = useOpsStore(s => s.openPersonaMarket)
 
   // 当前编辑的人设（如果是 null，则视为新建模式）
   const persona = useMemo(
@@ -231,6 +233,9 @@ export function PersonaEditor() {
             </Button>
             <Button size="sm" variant="outline" onClick={handleDelete} disabled={!persona || personas.length <= 1}>
               <Trash2 className="w-3.5 h-3.5 mr-1" /> 删除
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => { openPersonaMarket() }} className="border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">
+              <Store className="w-3.5 h-3.5 mr-1" /> 模板市场
             </Button>
           </div>
           <Button size="sm" onClick={() => { toast.success('配置已保存'); close() }}>

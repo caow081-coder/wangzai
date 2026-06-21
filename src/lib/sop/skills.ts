@@ -353,25 +353,11 @@ export const humanHandoffSkill: Skill = {
 const knowledgeSearchDef: SkillDefinition = {
   id: 'knowledge_search',
   name: '知识库检索',
-  description: '关键词匹配奔驰车型知识库（价格/配置/优惠/保养），返回相关知识点',
+  description: 'RAG 向量检索奔驰知识库（TF-IDF + 余弦相似度），返回 top-K 相关文档',
   category: 'recognition',
   inputSchema: { query: 'string' },
   outputSchema: { matched: 'boolean', results: 'array', topResult: 'string?' },
 }
-
-// 奔驰知识库（简化版，生产环境应接 RAG 向量检索）
-const KNOWLEDGE_BASE: { keywords: string[]; content: string; category: string }[] = [
-  { keywords: ['C级', 'C级价格', 'C200', 'C260'], content: '奔驰C级 2024款 指导价 33.23-37.99万，C200L 约33万起，C260L 约36万起，现车充足可试驾。', category: '轿车' },
-  { keywords: ['GLC', 'GLC价格', 'GLC300', 'GLC260'], content: '奔驰GLC 2024款 指导价 42.78-53.13万，GLC260 约43万，GLC300 约50万，SUV销量冠军。', category: 'SUV' },
-  { keywords: ['GLE', 'GLE价格', 'GLE350', 'GLE450'], content: '奔驰GLE 2024款 指导价 69.98-88.03万，GLE350 约70万，GLE450 约80万，中大型SUV。', category: 'SUV' },
-  { keywords: ['E级', 'E级价格', 'E260', 'E300'], content: '奔驰E级 2024款 指导价 44.01-59.98万，E260L 约44万，E300L 约52万，行政级轿车。', category: '轿车' },
-  { keywords: ['S级', 'S级价格', 'S400', 'S450', '迈巴赫'], content: '奔驰S级 2024款 指导价 96.26-204.26万，S400L 约96万，S450L 约130万，迈巴赫S级 170万起。', category: '旗舰' },
-  { keywords: ['EQE', 'EQS', '电动', '新能源'], content: '奔驰EQE 47.8-53.43万，EQS 88.1-133.9万，EVA纯电平台，续航最高 770km。', category: '电动车' },
-  { keywords: ['AMG', '性能'], content: 'AMG C43/C63 性能版，AMG GLE53/GLE63 高性能SUV，AMG GT 四门跑车。', category: 'AMG' },
-  { keywords: ['保养', '保养费用', '小保养', '大保养'], content: '奔驰 A保约 1500-2000元/1万公里，B保约 3000-4000元/2万公里，星时享套餐更优惠。', category: '售后' },
-  { keywords: ['金融', '分期', '贷款', '首付', '月供'], content: '奔驰金融最低首付 20%，可享 36/48/60 期分期，部分车型免息或低息，需资质审核。', category: '金融' },
-  { keywords: ['试驾', '体验'], content: '试驾需预约，带身份证驾驶证，周末名额紧张建议提前 1-2 天预约，可安排上门试驾。', category: '试驾' },
-]
 
 export const knowledgeSearchSkill: Skill = {
   definition: knowledgeSearchDef,
@@ -379,21 +365,62 @@ export const knowledgeSearchSkill: Skill = {
     const start = now()
     try {
       const query = (ctx.query as string) || ctx.message || ''
-      const results = KNOWLEDGE_BASE.filter(kb =>
-        kb.keywords.some(kw => query.includes(kw))
-      ).map(kb => ({ content: kb.content, category: kb.category, matchedKeywords: kb.keywords.filter(kw => query.includes(kw)) }))
+      if (!query.trim()) return ok({ matched: false, results: [], topResult: null, query }, start)
+
+      // 调用真实 RAG API（TF-IDF 向量检索）
+      const res = await fetch('http://localhost:3000/api/waos/knowledge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'search', query, topK: 5 }),
+        signal: AbortSignal.timeout(10000),
+      })
+      const data = await res.json()
+
+      if (!data.results || data.results.length === 0) {
+        return ok({ matched: false, results: [], topResult: null, query }, start)
+      }
+
+      const results = data.results.map((r: any) => ({
+        title: r.doc.title,
+        content: r.doc.content,
+        category: r.doc.category,
+        score: Math.round(r.score * 100) / 100,
+        matchedKeywords: r.matchedKeywords,
+      }))
 
       return ok({
-        matched: results.length > 0,
+        matched: true,
         results,
         topResult: results[0]?.content || null,
+        topTitle: results[0]?.title || null,
         query,
+        totalFound: data.count,
       }, start)
     } catch (e) {
-      return fail(e instanceof Error ? e.message : '知识库检索失败', start)
+      // RAG API 不可用时，退化到硬编码知识库（保证 SOP 不中断）
+      console.warn('[SOP] RAG API 不可用，退化到硬编码知识库:', e instanceof Error ? e.message : e)
+      const query = (ctx.query as string) || ctx.message || ''
+      const fallback = KNOWLEDGE_BASE.filter(kb => kb.keywords.some(kw => query.includes(kw)))
+        .map(kb => ({ title: kb.keywords[0], content: kb.content, category: kb.category, matchedKeywords: kb.keywords.filter(kw => query.includes(kw)) }))
+      return ok({
+        matched: fallback.length > 0,
+        results: fallback,
+        topResult: fallback[0]?.content || null,
+        query,
+        fallback: true,
+      }, start)
     }
   },
 }
+
+// 硬编码知识库（RAG API 不可用时的降级方案）
+const KNOWLEDGE_BASE: { keywords: string[]; content: string; category: string }[] = [
+  { keywords: ['C级', 'C200', 'C260'], content: '奔驰C级 2024款 33.23-37.99万，C200L 约33万，C260L 约36万。', category: '轿车' },
+  { keywords: ['GLC', 'GLC300', 'GLC260'], content: '奔驰GLC 2024款 42.78-53.13万，GLC260 约43万，GLC300 约50万。', category: 'SUV' },
+  { keywords: ['GLE', 'GLE350', 'GLE450'], content: '奔驰GLE 2024款 69.98-88.03万，GLE350 约70万，GLE450 约80万。', category: 'SUV' },
+  { keywords: ['E级', 'E260', 'E300'], content: '奔驰E级 2024款 44.01-59.98万，E260L 约44万，E300L 约52万。', category: '轿车' },
+  { keywords: ['S级', 'S400', 'S450', '迈巴赫'], content: '奔驰S级 96.26-204.26万，迈巴赫S级 170万起。', category: '旗舰' },
+]
 
 // ─── 所有 Skill 导出列表 ─────────────────────────────────────────────
 export const ALL_SKILLS: Skill[] = [

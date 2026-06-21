@@ -14,6 +14,8 @@ import { CommandPalette } from '@/components/waos/CommandPalette'
 import { NotificationsDrawer } from '@/components/waos/NotificationsDrawer'
 import { SettingsDialog } from '@/components/waos/SettingsDialog'
 import { PersonaEditor } from '@/components/waos/PersonaEditor'
+import { PersonaMarket } from '@/components/waos/PersonaMarket'
+import { DashboardPanel } from '@/components/waos/DashboardPanel'
 import { DownloadFloat } from '@/components/waos/DownloadFloat'
 import { BrainSettings } from '@/components/waos/BrainSettings'
 import { Splashscreen } from '@/components/waos/Splashscreen'
@@ -56,6 +58,8 @@ export default function Home() {
       <NotificationsDrawer />
       <SettingsDialog />
       <PersonaEditor />
+      <PersonaMarket />
+      <DashboardPanel />
       <ProDrawer />
       <BrainSettings />
       <DownloadFloat />

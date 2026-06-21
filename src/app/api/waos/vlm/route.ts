@@ -15,6 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getZAI } from '@/lib/zai'
+import { filterOutput } from '@/lib/safety'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -176,10 +177,28 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `Unknown VLM provider: ${provider}` }, { status: 400 })
     }
 
+    // AUDIT-SEC-REL: 对所有 VLM 输出强制执行 SafetyShield 过滤
+    // 图片识别可能返回 OCR 自客户截图的违规词/价格承诺，必须过滤后才能进入对话上下文。
+    if (description) {
+      const filtered = filterOutput(description)
+      if (filtered.filtered) {
+        console.warn(`[VLM] 输出被安全过滤: provider=${provider} reason=${filtered.reason} layer=${filtered.layer}`)
+        return NextResponse.json({
+          description: filtered.safe,
+          latency: Date.now() - startedAt,
+          provider,
+          safetyFiltered: true,
+          safetyReason: filtered.reason,
+          safetyLayer: filtered.layer,
+        })
+      }
+    }
+
     return NextResponse.json({
       description,
       latency: Date.now() - startedAt,
       provider,
+      safetyFiltered: false,
     })
   } catch (err) {
     return NextResponse.json({

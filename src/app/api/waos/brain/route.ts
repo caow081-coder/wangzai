@@ -20,8 +20,9 @@ export const dynamic = 'force-dynamic'
 
 const MODEL_PRIORITY = ['zhipu_api', 'doubao_docker', 'doubao', 'qianwen', 'kimi', 'zhipu'] as const
 
-// 智谱官方 API Key（内置，无需用户配置）
-const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY || 'a925a9d8f27f4cf39d0db6d087e37c43.qqIwgdjiG0ZZXG7R'
+// 智谱官方 API Key（AUDIT-SEC-REL: 仅从环境变量读取，禁止硬编码 fallback）
+// 历史版本曾硬编码真实 key 作为 fallback，导致源码泄漏 → key 泄漏。
+const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY || ''
 
 // doubao2api Docker 服务地址（用户启动 Docker 后可用）
 const DOUBAO_DOCKER_URL = process.env.DOUBAO_DOCKER_URL || 'http://localhost:9090'
@@ -49,6 +50,8 @@ function isModelAvailable(model: string, hasCookie: boolean): boolean {
   if (s.rateLimitedUntil > Date.now()) return false
   // zhipu_api / doubao_docker / zai 不需要 Cookie
   if (model !== 'zai' && model !== 'zhipu_api' && model !== 'doubao_docker' && !hasCookie) return false
+  // AUDIT-SEC-REL: zhipu_api 必须有 ZHIPU_API_KEY 才可用（防止 fallback 失效后空 key 请求 401）
+  if (model === 'zhipu_api' && !ZHIPU_API_KEY) return false
   return true
 }
 

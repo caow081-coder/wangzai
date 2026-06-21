@@ -434,6 +434,59 @@ process.on('SIGTERM', () => {
   app.quit()
 })
 
+// AUDIT-SEC-REL: 全局未捕获异常处理
+// Node.js 16+ 默认 unhandledRejection 会终止进程，导致 Electron 闪退。
+// 这里捕获后记录日志，避免单次 Promise 失败拖垮整个应用。
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[WAOS-Desktop] 未处理的 Promise rejection:', reason)
+  // 不退出进程，仅记录；上层业务逻辑应有自己的 try-catch
+})
+
+process.on('uncaughtException', (err) => {
+  console.error('[WAOS-Desktop] 未捕获的同步异常:', err?.stack || err)
+  // 同步异常通常意味着状态已损坏，但桌面应用闪退体验更差
+  // 这里记录后继续运行，由用户决定是否重启
+  // 如果是主窗口崩溃，Electron 自身的 crashReporter 会处理
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app-error', {
+        type: 'uncaughtException',
+        message: err?.message || String(err),
+        stack: err?.stack,
+      })
+    }
+  } catch { /* noop */ }
+})
+
+// AUDIT-SEC-REL: GPU 进程崩溃自动恢复
+app.on('gpu-process-crashed', (event) => {
+  console.error('[WAOS-Desktop] GPU 进程崩溃:', event)
+  // Electron 默认会重启 GPU 进程，这里仅记录
+})
+
+app.on('render-process-gone', (event, webContents, details) => {
+  console.error('[WAOS-Desktop] 渲染进程退出:', details?.reason, details)
+  // 主窗口渲染进程崩溃 → 重启窗口（保留 Next.js / stream 服务）
+  if (webContents === mainWindow?.webContents) {
+    console.log('[WAOS-Desktop] 主窗口渲染进程崩溃，1 秒后重建窗口...')
+    setTimeout(() => {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.close()
+        }
+        mainWindow = null
+        createWindow()
+      } catch (err) {
+        console.error('[WAOS-Desktop] 重建窗口失败:', err.message)
+      }
+    }, 1000)
+  }
+})
+
+app.on('child-process-gone', (event, details) => {
+  console.warn('[WAOS-Desktop] 子进程退出:', details?.type, details?.reason, details?.exitCode)
+})
+
 // ─── AI 大脑: 平台登录窗口 + 自动抓取 Cookie ──────────────────
 // 平台域名映射
 const PLATFORM_DOMAINS = {

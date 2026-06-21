@@ -36,6 +36,9 @@ interface AutoReplyRequest {
   personaId?: string
   config?: {
     skipDelay?: boolean
+    // AUDIT-SEC-REL: skipSafetyCheck 已废弃，强制不可跳过安全过滤
+    // 之前客户端可传 skipSafetyCheck:true 绕过 SafetyShield，导致违规词/价格承诺直接发给客户。
+    // 服务端现在永远执行安全检查，传入的 skipSafetyCheck 字段会被忽略并记录警告。
     skipSafetyCheck?: boolean
   }
 }
@@ -80,8 +83,11 @@ export async function POST(req: NextRequest) {
 
   const startedAt = Date.now()
 
-  // 1. 安全过滤
-  if (!config.skipSafetyCheck && content) {
+  // 1. 安全过滤（AUDIT-SEC-REL: 强制执行，不可被客户端 config.skipSafetyCheck 绕过）
+  if (content) {
+    if (config.skipSafetyCheck) {
+      console.warn('[AUTO-REPLY] 客户端传入 skipSafetyCheck=true，已忽略并强制执行安全过滤')
+    }
     const safety = safetyFilter(content)
     if (!safety.safe) {
       return NextResponse.json({
@@ -113,7 +119,7 @@ export async function POST(req: NextRequest) {
     meta: {
       label: meta.label,
       delayApplied: config.skipDelay ? 0 : meta.delay,
-      safetyChecked: !config.skipSafetyCheck,
+      safetyChecked: true,  // AUDIT-SEC-REL: 永远为 true，不可绕过
     },
   }
 

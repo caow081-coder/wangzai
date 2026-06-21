@@ -47,9 +47,18 @@ function startStreamServer(PORT = 3003) {
   const httpServer = createServer()
   const io = new Server(httpServer, {
     path: '/',
-    cors: { origin: '*', methods: ['GET', 'POST'] },
+    // AUDIT-SEC-REL: 收紧 CORS，仅允许本地开发端口
+    // 之前 origin:'*' 在生产环境暴露 socket.io 端点，可被任意网站连接
+    cors: {
+      origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:81', 'http://127.0.0.1:81'],
+      methods: ['GET', 'POST'],
+      credentials: false,
+    },
     pingTimeout: 60000,
     pingInterval: 25000,
+    // AUDIT-SEC-REL: 限制最大连接数，防止 socket 资源被恶意耗尽
+    maxHttpBufferSize: 1e6,  // 1MB 单帧上限
+    connectTimeout: 10000,
   })
 
   console.log(`[WAOS-Stream] 初始线索: ${INITIAL_LEADS.length}`)

@@ -7,3 +7,17 @@ release/
 tool-results/
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+
+# AUDIT-SEC-REL: 敏感配置文件禁止提交到 git（含 ZHIPU_API_KEY 等密钥）
+.env
+.env.*
+!.env.example
+.env.local
+.env.production
+.env.development
+
+# 数据库文件不入库（包含客户线索/对话历史等业务数据）
+db/*.db
+db/*.db-journal
+db/*.db-wal
+db/*.db-shm

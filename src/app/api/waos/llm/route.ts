@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getZAI } from '@/lib/zai'
+import { filterOutput } from '@/lib/safety'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -342,11 +343,31 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `Unknown provider: ${provider}` }, { status: 400 })
     }
 
+    // AUDIT-SEC-REL: 对所有 LLM 输出强制执行 SafetyShield 过滤
+    // 之前该 route 完全跳过 filterOutput，导致客户端可直接绕过 /api/waos/reply 的安全管道。
+    // 风险：违规词/价格承诺/高危词直接返回给客户端 → 用于发送给客户
+    if (reply) {
+      const filtered = filterOutput(reply)
+      if (filtered.filtered) {
+        console.warn(`[LLM] 输出被安全过滤: provider=${provider} reason=${filtered.reason} layer=${filtered.layer}`)
+        return NextResponse.json({
+          reply: filtered.safe,
+          tokensUsed,
+          latency: Date.now() - startedAt,
+          provider,
+          safetyFiltered: true,
+          safetyReason: filtered.reason,
+          safetyLayer: filtered.layer,
+        })
+      }
+    }
+
     return NextResponse.json({
       reply,
       tokensUsed,
       latency: Date.now() - startedAt,
       provider,
+      safetyFiltered: false,
     })
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : 'unknown'

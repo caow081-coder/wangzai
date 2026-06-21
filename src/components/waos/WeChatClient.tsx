@@ -434,9 +434,9 @@ function ChatWindow() {
             {sourceLabel(lead.source)} · {lead.messages?.length || 0} 条消息
           </p>
         </div>
-        <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"><Phone className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
-        <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"><Video className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
-        <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"><PanelLeft className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
+        <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors" aria-label="语音通话" title="语音通话"><Phone className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
+        <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors" aria-label="视频通话" title="视频通话"><Video className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
+        <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors" aria-label="侧边栏切换" title="侧边栏切换"><PanelLeft className="w-4 h-4 text-[#7a7a7a] dark:text-[#9a9a9a]" /></button>
         {isDesktop && (
           <button
             onClick={() => setEmbedMode(true)}

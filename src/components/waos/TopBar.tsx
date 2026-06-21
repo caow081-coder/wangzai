@@ -201,9 +201,16 @@ export function TopBar() {
       {/* 9. 微信连接（登录+启动+停止 三合一） */}
       <button
         onClick={() => {
-          if (!wechatReal.loggedIn) wechatLogin()
-          else if (!wechatReal.running) wechatStart()
-          else wechatStop()
+          if (!wechatReal.loggedIn) {
+            toast.info('正在唤起微信登录…', { description: '请在 Electron 端扫码完成登录' })
+            wechatLogin()
+          } else if (!wechatReal.running) {
+            toast.info('正在启动自动回复…', { description: 'AI 大脑即将接管新消息' })
+            wechatStart()
+          } else {
+            toast.warning('已停止微信自动回复', { description: '机器人不再自动接管新消息' })
+            wechatStop()
+          }
         }}
         className={`relative w-8 h-8 rounded-lg transition-colors apple-btn shrink-0 flex items-center justify-center ${
           wechatReal.running

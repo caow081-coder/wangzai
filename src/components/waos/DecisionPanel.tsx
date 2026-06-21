@@ -101,12 +101,24 @@ function CollapsibleSection({
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  // 使用 div + role="button" 而非 <button>：避免 badge 中包含 <button>（如「编辑人设」）
+  // 时触发 React DOM 嵌套警告 "button cannot contain a nested button"
+  const handleToggle = () => setOpen(o => !o)
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      handleToggle()
+    }
+  }
   return (
     <div className="border-b border-border/60">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors apple-btn"
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={handleToggle}
+        onKeyDown={handleKeyDown}
         aria-expanded={open}
+        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors apple-btn cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring/40 rounded-sm"
       >
         <div className="w-5 h-5 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
           {icon}
@@ -114,7 +126,7 @@ function CollapsibleSection({
         <h3 className="text-[12px] font-semibold flex-1 text-left truncate">{title}</h3>
         {badge}
         <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
-      </button>
+      </div>
       <AnimatePresence initial={false}>
         {open && (
           <motion.div
@@ -609,7 +621,7 @@ function StressMonitorPanel() {
             启动压测
           </button>
         )}
-        <button onClick={() => setExpanded(!expanded)} className="p-0.5 text-muted-foreground hover:text-foreground">
+        <button onClick={() => setExpanded(!expanded)} className="p-0.5 text-muted-foreground hover:text-foreground" aria-label={expanded ? '收起压测监控' : '展开压测监控'} aria-expanded={expanded}>
           <ChevronRight className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`} />
         </button>
       </div>
@@ -995,6 +1007,9 @@ function ReplySuggestions() {
         <button
           onClick={() => generateReplySuggestions()}
           className="p-1 rounded hover:bg-muted transition-colors apple-btn"
+          aria-label="刷新推荐话术"
+          title="刷新推荐话术"
+          disabled={loading}
         >
           <svg className={`w-3 h-3 text-muted-foreground ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />

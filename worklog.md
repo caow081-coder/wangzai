@@ -552,3 +552,53 @@ Stage Summary:
   * SopRunLog 全实例模式（filterInstance='all'）可拉取最近 10 个实例日志，可作为「全局执行历史」
   * PropertiesPanel 的 Skill 参数 JSON 编辑器可升级为基于 inputSchema 的表单生成器
   * SopNodePalette 拖入位置目前是鼠标释放点，未来可加吸附网格
+
+---
+Task ID: 主轮次-SOP引擎完整实现
+Agent: 主 Claude (全栈工程师)
+Task: 实现 WAOS-X SOP 引擎（Phase 1-8: Skill接口+Runtime+3模板+可视化设计器）
+
+Work Log:
+- Phase 1-2 后端核心（自做）：
+  - prisma/schema.prisma 新增4表(SopDefinition/SopInstance/SopNodeLog/SkillRegistry)
+  - src/lib/sop/types.ts: 完整类型定义
+  - src/lib/sop/skills.ts: 9个Skill实现(包装现有kernel/brain/safety功能)
+    - intent_recognition / value_evaluation / strategy_select
+    - reply_generate(模板+LLM降级) / crm_update(乐观锁) / send_message
+    - schedule_followup(定时器) / human_handoff / knowledge_search(奔驰知识库10条)
+  - src/lib/sop/registry.ts: SkillRegistry单例+syncToDatabase
+- Phase 3 SOP Runtime（自做）：
+  - src/lib/sop/runtime.ts: Trigger/Scheduler/Executor三大组件
+  - CRUD + findMatchingSop(触发匹配) + getNextNodes(DAG遍历) + executeNode(6节点类型)
+  - runInstance(防死循环MAX_NODES=50) + pause/resume/abort
+- Phase 8 预设模板（自做）：
+  - src/lib/sop/templates.ts: 3个SOP模板
+    - 高意向成交(16节点, intent=PRICE&value≥80)
+    - 沉睡唤醒(12节点, SILENCE_BREAK)
+    - 投诉安抚(12节点, REJECTION&emotion<30)
+- API路由（自做）：
+  - src/app/api/waos/sop/route.ts: GET+POST统一路由(13个action)
+- Phase 4-7 UI（派subagent，+2372行）：
+  - SopPanel.tsx(1145行): 三栏布局(列表+设计器+属性面板+日志)
+  - SopDesigner.tsx(625行): SVG画布+6节点类型+贝塞尔连线+拖拽+运行时高亮
+  - SopRunLog.tsx(395行): 日志面板(4状态+筛选+自动刷新)
+  - SopNodePalette.tsx(161行): Skill工具箱(9 Skill按5类分组)
+  - WeChatClient.tsx: 新增🤖 SOP引擎导航按钮
+- 端到端验证（agent-browser + curl）：
+  - db push成功(4表)
+  - init_presets: 3模板初始化
+  - sync_skills: 9 Skill同步DB
+  - run_sync测试: 高意向SOP完整执行13节点全success
+    开始→意图识别→价值评估→价值≥80?YES→策略选择→生成话术→发送→CRM→通知→等待→回复?YES→跟进→结束
+  - 条件分支验证: test_001(value<80)走NO分支→标准回复(LLM 16s)→结束-标准
+  - agent-browser: SOP面板完整渲染(3预设+9 Skill+设计器+运行对话框+日志)
+- lint: 0 errors, dev server HTTP 200
+- git push (commit ad5e490)
+
+Stage Summary:
+- SOP引擎从设计到完整实现，9 Skill + Runtime + 3模板 + 可视化设计器
+- 本轮新增 4000+ 行代码（后端1000 + UI 2372 + schema/types 600）
+- 端到端验证：SOP可创建/编辑/运行/暂停/终止，条件分支正确，日志完整记录
+- WAOS-X从"单次对话工具"升级为"可配置自动化销售流程平台"
+- GitHub: commit ad5e490，本地远端同步
+- 下一阶段：工作台集成(会话旁运行SOP按钮) + A/B测试 + 更多预设模板

@@ -22,56 +22,95 @@ export function DecisionPanel() {
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
-      {/* 顶部固定监控条 */}
-      <MonitorBar />
-
-      {/* 压测监控面板（可折叠，始终显示） */}
-      <StressMonitorPanel />
+      {/* 顶部紧凑监控条（合并 MonitorBar + 压测摘要，只占 1 行，让客户信息首屏可见）*/}
+      <CompactTopBar />
 
       {/* 滚动区域 */}
       <div className="flex-1 min-h-0 overflow-y-auto waos-scrollbar">
         {!lead ? <EmptyState /> : (
           <>
-            {/* 客户头部 */}
+            {/* 客户头部（首屏立即可见）*/}
             <LeadHeader />
 
-            {/* SOP 执行状态卡片（Phase 6：紧跟客户信息，展示当前客户运行中的 SOP 实例）*/}
+            {/* SOP 执行状态卡片 */}
             <SopInstanceCard />
 
-        {/* SalesCopilot (AI 副驾 4字段) */}
-        <SalesCopilot />
+            {/* 快捷动作（提前，让用户立即能操作）*/}
+            <Actions />
 
-        {/* 动态线索表单 4 字段（模块7） */}
-        <LeadFormSection key={lead.id} />
+            {/* 运行 SOP 下拉按钮 */}
+            <div className="px-3 pb-2">
+              <SopRunButton />
+            </div>
 
-        {/* 成交/流失预测 */}
-        <Predictions />
+            {/* 推荐话术（核心功能，提前显示）*/}
+            <ReplySuggestions />
 
-        {/* 快捷动作（提到前面）*/}
-        <Actions />
+            {/* 动态线索表单 4 字段 */}
+            <LeadFormSection key={lead.id} />
 
-        {/* Phase 6: 运行 SOP 下拉按钮（紧跟快捷动作） */}
-        <div className="px-3 pb-3 -mt-1">
-          <SopRunButton />
-        </div>
+            {/* SalesCopilot (AI 副驾) */}
+            <SalesCopilot />
 
-        {/* 推荐话术（提到前面）*/}
-        <ReplySuggestions />
+            {/* 成交/流失预测 */}
+            <Predictions />
 
-        {/* 客户记忆 L1-L4 */}
-        <CustomerMemory />
+            {/* 完整压测监控（可折叠，放底部不占首屏）*/}
+            <StressMonitorPanel />
 
-        {/* WHY THIS DECISION */}
-        <WhyDecision />
+            {/* 客户记忆 L1-L4 */}
+            <CustomerMemory />
 
-        {/* 状态机 */}
-        <StateMachine />
+            {/* WHY THIS DECISION */}
+            <WhyDecision />
 
-        {/* Persona */}
-        <PersonaCard />
+            {/* 状态机 */}
+            <StateMachine />
+
+            {/* Persona */}
+            <PersonaCard />
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── 紧凑顶部条（合并监控+压测摘要，1 行 28px）──────────────────────
+function CompactTopBar() {
+  const metrics = useOpsStore(s => s.metrics)
+  const sm = useOpsStore(s => s.stressMonitor)
+  const openProDrawer = useOpsStore(s => s.openProDrawer)
+
+  return (
+    <div className="shrink-0 h-7 flex items-center gap-2 px-2 bg-card border-b border-border/60 text-[10px]">
+      <button
+        onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'scheduler' })) }}
+        className="flex items-center gap-1 hover:text-primary transition-colors apple-btn"
+        title="热门客户数"
+      >
+        <Flame className="w-3 h-3 text-rose-500" />
+        <span className="font-mono font-bold">{metrics.hotCount}</span>
+      </button>
+      <span className="text-muted-foreground/40">·</span>
+      <button
+        onClick={() => { openProDrawer(); window.dispatchEvent(new CustomEvent('waos:proTab', { detail: 'scheduler' })) }}
+        className="flex items-center gap-1 hover:text-primary transition-colors apple-btn"
+        title="队列深度"
+      >
+        <span className="text-muted-foreground">队列</span>
+        <span className="font-mono font-bold">{metrics.queueDepth}</span>
+      </button>
+      <span className="text-muted-foreground/40">·</span>
+      <div className="flex items-center gap-1" title="压测监控">
+        <div className={`w-1.5 h-1.5 rounded-full ${sm.running ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground/30'}`} />
+        <span className="text-muted-foreground">压测</span>
+        {sm.currentRound > 0 && (
+          <span className="font-mono text-emerald-600">✅{sm.totalFail === 0 ? `${sm.totalPass}` : `${sm.totalPass}/${sm.totalFail}`}</span>
+        )}
+      </div>
+      <div className="flex-1" />
+      <span className="text-muted-foreground/60 text-[9px]">决策面板</span>
     </div>
   )
 }

@@ -1661,3 +1661,26 @@ Stage Summary:
 - 去重复(模块入口紧凑化)
 - 默认深色(用户主场景)
 - GitHub: commit 122c4ba
+
+---
+Task ID: 主轮次-右侧加宽+打包成功
+Agent: 主 Claude
+Task: 修复右侧面板看不到 + 打包旺财.exe
+
+Work Log:
+- VLM审计: 右侧面板"宽度偏窄,内容拥挤"
+- 修复右侧宽度: 400px → 460px(最小380 最大560)
+- 加 border-l 分隔线
+- 修复 next build: tsconfig exclude skills/examples/mini-services/release
+- 打包成功: next build + electron-builder --dir → 旺财.exe 222MB
+- 修复 git push: release/旺财.exe 超 GitHub 100MB 限制
+  - filter-branch 移除 release 历史
+  - .gitignore 排除 release/*.exe
+- tsc 0错误, lint 0 errors
+- VLM: 深色8/10, 右侧加宽后7/10
+- git push (commit 29550f5)
+
+Stage Summary:
+- 右侧面板加宽60px,内容清晰可见
+- 打包成功: 旺财.exe 222MB
+- GitHub: commit 29550f5, 大文件已清理

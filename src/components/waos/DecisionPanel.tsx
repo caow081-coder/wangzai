@@ -22,59 +22,89 @@ export function DecisionPanel() {
   const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
   const leadsCount = useOpsStore(s => s.leads.length)
   const setClientTab = useOpsStore(s => s.setClientTab)
+  const [activeTab, setActiveTab] = useState<'customer' | 'reply' | 'analysis'>('customer')
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
-      {/* 顶部紧凑监控条（合并 MonitorBar + 压测摘要，只占 1 行，让客户信息首屏可见）*/}
+      {/* 顶部紧凑监控条 */}
       <CompactTopBar />
 
-      {/* 滚动区域 */}
-      <div className="flex-1 min-h-0 overflow-y-auto waos-scrollbar">
-        {!lead ? <EmptyState hasLeads={leadsCount > 0} onGoChannels={() => setClientTab('channels')} /> : (
-          <>
-            {/* 客户头部（首屏立即可见）*/}
-            <LeadHeader />
+      {!lead ? (
+        <EmptyState hasLeads={leadsCount > 0} onGoChannels={() => setClientTab('channels')} />
+      ) : (
+        <>
+          {/* 客户头部（始终显示）*/}
+          <LeadHeader />
 
-            {/* SOP 执行状态卡片 */}
-            <SopInstanceCard />
+          {/* Tab 切换栏（企业微信风格）*/}
+          <div className="shrink-0 flex items-center border-b border-border/60 bg-muted/30">
+            {([
+              { id: 'customer' as const, label: '客户' },
+              { id: 'reply' as const, label: '话术' },
+              { id: 'analysis' as const, label: '分析' },
+            ]).map(t => (
+              <button
+                key={t.id}
+                onClick={() => setActiveTab(t.id)}
+                className={`flex-1 py-2 text-[12px] font-medium transition-colors relative ${
+                  activeTab === t.id
+                    ? 'text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {t.label}
+                {activeTab === t.id && (
+                  <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-primary rounded-full" />
+                )}
+              </button>
+            ))}
+          </div>
 
-            {/* 快捷动作（提前，让用户立即能操作）*/}
-            <Actions />
+          {/* 滚动区域（根据 Tab 显示不同内容）*/}
+          <div className="flex-1 min-h-0 overflow-y-auto waos-scrollbar">
+            {activeTab === 'customer' && (
+              <>
+                {/* 快捷动作 */}
+                <Actions />
+                {/* 运行 SOP */}
+                <div className="px-3 pb-2">
+                  <SopRunButton />
+                </div>
+                {/* SOP 执行状态 */}
+                <SopInstanceCard />
+                {/* 线索表单 */}
+                <LeadFormSection key={lead.id} />
+              </>
+            )}
 
-            {/* 运行 SOP 下拉按钮 */}
-            <div className="px-3 pb-2">
-              <SopRunButton />
-            </div>
+            {activeTab === 'reply' && (
+              <>
+                {/* 推荐话术（核心）*/}
+                <ReplySuggestions />
+              </>
+            )}
 
-            {/* 推荐话术（核心功能，提前显示）*/}
-            <ReplySuggestions />
-
-            {/* 动态线索表单 4 字段 */}
-            <LeadFormSection key={lead.id} />
-
-            {/* SalesCopilot (AI 副驾) */}
-            <SalesCopilot />
-
-            {/* 成交/流失预测 */}
-            <Predictions />
-
-            {/* 完整压测监控（可折叠，放底部不占首屏）*/}
-            <StressMonitorPanel />
-
-            {/* 客户记忆 L1-L4 */}
-            <CustomerMemory />
-
-            {/* WHY THIS DECISION */}
-            <WhyDecision />
-
-            {/* 状态机 */}
-            <StateMachine />
-
-            {/* Persona */}
-            <PersonaCard />
-          </>
-        )}
-      </div>
+            {activeTab === 'analysis' && (
+              <>
+                {/* SalesCopilot */}
+                <SalesCopilot />
+                {/* 成交预测 */}
+                <Predictions />
+                {/* 客户记忆 */}
+                <CustomerMemory />
+                {/* WHY THIS DECISION */}
+                <WhyDecision />
+                {/* 状态机 */}
+                <StateMachine />
+                {/* 压测监控（底部）*/}
+                <StressMonitorPanel />
+                {/* Persona */}
+                <PersonaCard />
+              </>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

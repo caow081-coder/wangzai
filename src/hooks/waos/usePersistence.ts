@@ -27,7 +27,7 @@ const DEFAULT_SETTINGS: Settings = {
   cooldownMinutes: 30,
   hotThreshold: 80,
   warmThreshold: 50,
-  theme: 'auto',
+  theme: 'dark',  // 深色优先（旺财主场景）
   density: 'compact',
   showSafetyShield: true,
   showAuditTimeline: true,

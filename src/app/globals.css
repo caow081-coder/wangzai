@@ -43,73 +43,130 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* ═══════════════════════════════════════════════════════
+   旺财 WAOS 设计系统
+   主色：旺财绿 emerald（活力 + 财运）
+   设计原则：深色优先，白色主题柔和化
+   ═══════════════════════════════════════════════════════ */
+
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+
+  /* ─── 白色主题（柔和化，避免刺眼）─── */
+  --background: oklch(0.98 0.002 180);          /* 极浅灰绿，不纯白 */
+  --foreground: oklch(0.20 0.01 180);           /* 深灰，不纯黑 */
+  --card: oklch(1 0 0);                          /* 卡片纯白 */
+  --card-foreground: oklch(0.20 0.01 180);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --popover-foreground: oklch(0.20 0.01 180);
+
+  /* 主色：旺财绿 */
+  --primary: oklch(0.62 0.15 160);              /* emerald-600 */
+  --primary-foreground: oklch(0.98 0 0);
+
+  /* 次要色：浅灰绿 */
+  --secondary: oklch(0.95 0.005 180);
+  --secondary-foreground: oklch(0.30 0.01 180);
+
+  /* 静音色 */
+  --muted: oklch(0.95 0.005 180);
+  --muted-foreground: oklch(0.50 0.01 180);     /* 中灰，可读性好 */
+
+  /* 强调色：浅绿背景 */
+  --accent: oklch(0.93 0.03 160);
+  --accent-foreground: oklch(0.30 0.05 160);
+
+  /* 危险色：柔和红 */
+  --destructive: oklch(0.58 0.20 25);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  /* 边框：浅灰 */
+  --border: oklch(0.90 0.005 180);
+  --input: oklch(0.92 0.005 180);
+  --ring: oklch(0.62 0.15 160);                 /* 聚焦环 = 主色 */
+
+  /* 图表色：旺财调色板 */
+  --chart-1: oklch(0.62 0.15 160);              /* emerald */
+  --chart-2: oklch(0.65 0.18 250);              /* blue */
+  --chart-3: oklch(0.70 0.15 60);               /* amber */
+  --chart-4: oklch(0.55 0.22 300);              /* purple */
+  --chart-5: oklch(0.60 0.20 15);               /* rose */
+
+  /* 侧边栏 */
+  --sidebar: oklch(0.96 0.005 180);
+  --sidebar-foreground: oklch(0.20 0.01 180);
+  --sidebar-primary: oklch(0.62 0.15 160);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-accent: oklch(0.93 0.03 160);
+  --sidebar-accent-foreground: oklch(0.30 0.05 160);
+  --sidebar-border: oklch(0.90 0.005 180);
+  --sidebar-ring: oklch(0.62 0.15 160);
+
+  /* ─── 状态色（柔和，避免刺眼）─── */
+  --status-hot: oklch(0.62 0.18 25);            /* 柔和红 */
+  --status-warm: oklch(0.70 0.15 55);           /* 柔和橙 */
+  --status-cold: oklch(0.65 0.02 220);          /* 柔和蓝灰 */
+  --status-success: oklch(0.65 0.15 150);       /* 柔和绿 */
+  --status-warning: oklch(0.75 0.15 85);        /* 柔和黄 */
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* ─── 深色主题（深色优先，主要使用场景）─── */
+  --background: oklch(0.16 0.005 180);          /* 深灰带轻微绿调，不纯黑 */
+  --foreground: oklch(0.93 0.005 180);          /* 浅灰，不纯白 */
+  --card: oklch(0.20 0.005 180);                /* 卡片深灰 */
+  --card-foreground: oklch(0.93 0.005 180);
+  --popover: oklch(0.22 0.005 180);
+  --popover-foreground: oklch(0.93 0.005 180);
+
+  /* 主色：旺财绿（深色下更亮）*/
+  --primary: oklch(0.72 0.17 160);              /* emerald-400，深色下显眼 */
+  --primary-foreground: oklch(0.15 0.01 180);
+
+  /* 次要色 */
+  --secondary: oklch(0.25 0.005 180);
+  --secondary-foreground: oklch(0.90 0.005 180);
+
+  /* 静音色 */
+  --muted: oklch(0.24 0.005 180);
+  --muted-foreground: oklch(0.62 0.01 180);     /* 深色下中灰 */
+
+  /* 强调色 */
+  --accent: oklch(0.30 0.05 160);
+  --accent-foreground: oklch(0.85 0.10 160);
+
+  /* 危险色 */
+  --destructive: oklch(0.65 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  /* 边框 */
+  --border: oklch(1 0 0 / 8%);                  /* 半透明白 */
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.72 0.17 160);
+
+  /* 图表色（深色下更鲜艳）*/
+  --chart-1: oklch(0.72 0.17 160);
+  --chart-2: oklch(0.70 0.18 250);
+  --chart-3: oklch(0.75 0.15 60);
+  --chart-4: oklch(0.65 0.22 300);
+  --chart-5: oklch(0.68 0.20 15);
+
+  /* 侧边栏 */
+  --sidebar: oklch(0.18 0.005 180);
+  --sidebar-foreground: oklch(0.93 0.005 180);
+  --sidebar-primary: oklch(0.72 0.17 160);
+  --sidebar-primary-foreground: oklch(0.15 0.01 180);
+  --sidebar-accent: oklch(0.30 0.05 160);
+  --sidebar-accent-foreground: oklch(0.85 0.10 160);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.72 0.17 160);
+
+  /* 状态色（深色下柔和发光）*/
+  --status-hot: oklch(0.68 0.20 25);
+  --status-warm: oklch(0.75 0.15 55);
+  --status-cold: oklch(0.70 0.02 220);
+  --status-success: oklch(0.72 0.15 150);
+  --status-warning: oklch(0.78 0.15 85);
 }
 
 @layer base {
@@ -118,10 +175,78 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* 选中文本颜色 */
+  ::selection {
+    background-color: oklch(0.62 0.15 160 / 0.25);
+    color: var(--foreground);
   }
 }
 
-/* ─── SOP 引擎相关样式 ─────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════
+   统一间距系统
+   ═══════════════════════════════════════════════════════ */
+
+/* 卡片间距统一 */
+.waos-card {
+  @apply rounded-xl border border-border bg-card p-4;
+}
+.waos-card-sm {
+  @apply rounded-lg border border-border bg-card p-3;
+}
+.waos-card-tight {
+  @apply rounded-lg border border-border bg-card p-2;
+}
+
+/* 按钮间距统一 */
+.waos-btn {
+  @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-all;
+}
+.waos-btn-sm {
+  @apply inline-flex items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-all;
+}
+
+/* 状态徽章（柔和色，不刺眼）*/
+.waos-badge-hot {
+  background-color: oklch(0.62 0.18 25 / 0.12);
+  color: oklch(0.55 0.20 25);
+}
+.dark .waos-badge-hot {
+  background-color: oklch(0.68 0.20 25 / 0.2);
+  color: oklch(0.80 0.15 25);
+}
+.waos-badge-warm {
+  background-color: oklch(0.70 0.15 55 / 0.12);
+  color: oklch(0.55 0.15 55);
+}
+.dark .waos-badge-warm {
+  background-color: oklch(0.75 0.15 55 / 0.2);
+  color: oklch(0.85 0.12 55);
+}
+.waos-badge-cold {
+  background-color: oklch(0.65 0.02 220 / 0.12);
+  color: oklch(0.50 0.02 220);
+}
+.dark .waos-badge-cold {
+  background-color: oklch(0.70 0.02 220 / 0.2);
+  color: oklch(0.80 0.02 220);
+}
+.waos-badge-success {
+  background-color: oklch(0.65 0.15 150 / 0.12);
+  color: oklch(0.50 0.15 150);
+}
+.dark .waos-badge-success {
+  background-color: oklch(0.72 0.15 150 / 0.2);
+  color: oklch(0.82 0.12 150);
+}
+
+/* ═══════════════════════════════════════════════════════
+   SOP 引擎相关样式
+   ═══════════════════════════════════════════════════════ */
 
 /* 节点边线流动动画（运行时高亮） */
 @keyframes sop-flow {
@@ -131,21 +256,39 @@
 
 /* 运行日志面板自定义滚动条 */
 .waos-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 .waos-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
 .waos-scrollbar::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
+  background: oklch(0.50 0.01 180 / 0.3);
   border-radius: 3px;
 }
 .waos-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground));
+  background: oklch(0.50 0.01 180 / 0.5);
 }
 
 /* SOP 设计器画布网格背景 */
 .bg-grid {
   background-position: 0 0;
+}
+
+/* 苹果风格按钮 */
+.apple-btn {
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.apple-btn:active {
+  transform: scale(0.97);
+}
+
+/* 玻璃拟态卡片 */
+.glass-card {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  background-color: oklch(1 0 0 / 0.7);
+}
+.dark .glass-card {
+  background-color: oklch(0.20 0.005 180 / 0.7);
 }

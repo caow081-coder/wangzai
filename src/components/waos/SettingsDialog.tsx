@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import {
   Settings as SettingsIcon, Sliders, Bell, Eye, RefreshCw, Zap,
-  Flame, Bot, Radio, Clock, TrendingUp, Lock, BookOpen,
+  Flame, Bot, Radio, Clock, TrendingUp, Lock, BookOpen, ChevronRight,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { UpdateStatusInline } from '@/components/waos/UpdateChecker'
@@ -77,57 +77,53 @@ export function SettingsDialog() {
       <DialogContent className="max-w-2xl bg-[oklch(0.165_0_0)] border-[oklch(1_0_0/12%)] text-zinc-100 p-0 overflow-hidden max-h-[90vh] flex flex-col">
         <DialogHeader className="px-5 py-4 border-b border-[oklch(1_0_0/8%)] bg-[oklch(0.18_0_0)]">
           <DialogTitle className="text-sm font-semibold text-white flex items-center gap-2">
-            <SettingsIcon className="w-4 h-4 text-emerald-400" />
+            <SettingsIcon className="w-4 h-4 text-primary" />
             WAOS 控制台设置
-            <span className="text-[10px] font-mono text-zinc-500 ml-2">v3.0</span>
+            <span className="text-[10px] font-mono text-muted-foreground/70 ml-2">v3.0</span>
           </DialogTitle>
-          <DialogDescription className="text-[11px] text-zinc-400 mt-0.5">
+          <DialogDescription className="text-[11px] text-muted-foreground mt-0.5">
             调整调度器参数、显示偏好、通知规则。修改会实时生效。
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto waos-scrollbar px-5 py-4 space-y-5">
-          {/* ─── 6 大模块快捷入口（UI-COMPACT: 从顶栏迁入）─── */}
+        <div className="flex-1 overflow-y-auto waos-scrollbar px-5 py-4 space-y-4">
+          {/* ─── 模块快捷入口（紧凑单行，减少视觉占用）─── */}
           <section>
-            <div className="flex items-center gap-2 mb-3">
-              <Zap className="w-3.5 h-3.5 text-emerald-400" />
-              <h3 className="text-[11px] font-semibold tracking-wider text-zinc-300 uppercase">模块快捷入口</h3>
-              <span className="text-[9px] text-zinc-500 ml-auto">点击进入对应模块</span>
+            <div className="flex items-center gap-2 mb-2">
+              <Zap className="w-3 h-3 text-primary" />
+              <h3 className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">模块</h3>
+              <span className="text-[9px] text-muted-foreground/60 ml-auto">点击跳转</span>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="flex flex-wrap gap-1.5">
               {MODULE_TABS.map(t => (
                 <button
                   key={t.id}
                   onClick={() => openModule(t.id)}
-                  className="flex items-center gap-1.5 px-2.5 py-2 rounded-md text-[11px] font-medium bg-[oklch(0.13_0_0)] border border-[oklch(1_0_0/10%)] text-zinc-300 hover:bg-[oklch(1_0_0/5%)] hover:border-emerald-500/40 hover:text-emerald-300 transition-colors"
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
                   title={t.desc}
                 >
                   {t.icon}
-                  <span className="truncate">{t.label}</span>
+                  <span>{t.label}</span>
                 </button>
               ))}
             </div>
           </section>
 
-          {/* ─── 知识库管理入口 ─── */}
+          {/* ─── 知识库管理入口（紧凑）─── */}
           <section>
             <button
               onClick={handleOpenKnowledge}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-[12px] font-medium bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/15 hover:border-emerald-500/50 transition-colors group"
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] font-medium bg-accent border border-primary/20 text-accent-foreground hover:bg-accent/80 hover:border-primary/40 transition-colors group"
             >
-              <BookOpen className="w-4 h-4 text-emerald-400" />
-              <div className="flex-1 text-left">
-                <div className="text-[12px] font-semibold">📖 知识库管理</div>
-                <div className="text-[10px] font-mono text-emerald-400/70 mt-0.5">
-                  RAG · 文档 CRUD · 检索测试 · 批量导入
-                </div>
-              </div>
-              <span className="text-[10px] text-emerald-400/70 group-hover:translate-x-0.5 transition-transform">→</span>
+              <BookOpen className="w-3.5 h-3.5 text-primary" />
+              <span className="flex-1 text-left text-[12px] font-semibold">📖 知识库管理</span>
+              <span className="text-[9px] text-muted-foreground">RAG · TF-IDF 检索</span>
+              <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
             </button>
           </section>
 
           {/* ─── Scheduler Parameters ─── */}
-          <Section icon={<Sliders className="w-3.5 h-3.5 text-emerald-400" />} title="调度器参数">
+          <Section icon={<Sliders className="w-3.5 h-3.5 text-primary" />} title="调度器参数">
             <SliderRow
               label="老化补偿速率"
               hint={`COLD 队列每 tick +${settings.agingRate} 分`}
@@ -165,11 +161,11 @@ export function SettingsDialog() {
             />
             <div className="grid grid-cols-2 gap-3 pt-2">
               <div>
-                <label className="text-[10px] font-mono text-zinc-500 uppercase mb-1.5 block">业务时间窗 - 开始</label>
+                <label className="text-[10px] font-mono text-muted-foreground/70 uppercase mb-1.5 block">业务时间窗 - 开始</label>
                 <select
                   value={settings.businessHoursStart}
                   onChange={e => update({ businessHoursStart: Number(e.target.value) })}
-                  className="w-full px-2 py-1.5 text-[11px] font-mono bg-[oklch(0.13_0_0)] border border-[oklch(1_0_0/10%)] rounded-md text-zinc-200 focus:outline-none focus:border-emerald-500/50"
+                  className="w-full px-2 py-1.5 text-[11px] font-mono bg-[oklch(0.13_0_0)] border border-[oklch(1_0_0/10%)] rounded-md text-zinc-200 focus:outline-none focus:border-primary/40"
                 >
                   {Array.from({ length: 24 }, (_, i) => (
                     <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>
@@ -177,11 +173,11 @@ export function SettingsDialog() {
                 </select>
               </div>
               <div>
-                <label className="text-[10px] font-mono text-zinc-500 uppercase mb-1.5 block">业务时间窗 - 结束</label>
+                <label className="text-[10px] font-mono text-muted-foreground/70 uppercase mb-1.5 block">业务时间窗 - 结束</label>
                 <select
                   value={settings.businessHoursEnd}
                   onChange={e => update({ businessHoursEnd: Number(e.target.value) })}
-                  className="w-full px-2 py-1.5 text-[11px] font-mono bg-[oklch(0.13_0_0)] border border-[oklch(1_0_0/10%)] rounded-md text-zinc-200 focus:outline-none focus:border-emerald-500/50"
+                  className="w-full px-2 py-1.5 text-[11px] font-mono bg-[oklch(0.13_0_0)] border border-[oklch(1_0_0/10%)] rounded-md text-zinc-200 focus:outline-none focus:border-primary/40"
                 >
                   {Array.from({ length: 24 }, (_, i) => (
                     <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>
@@ -212,7 +208,7 @@ export function SettingsDialog() {
               onChange={v => update({ showMetricsCharts: v })}
             />
             <div className="pt-2">
-              <label className="text-[10px] font-mono text-zinc-500 uppercase mb-1.5 block">界面密度</label>
+              <label className="text-[10px] font-mono text-muted-foreground/70 uppercase mb-1.5 block">界面密度</label>
               <div className="grid grid-cols-2 gap-2">
                 {(['compact', 'comfortable'] as const).map(d => (
                   <button
@@ -220,8 +216,8 @@ export function SettingsDialog() {
                     onClick={() => update({ density: d })}
                     className={`px-3 py-1.5 rounded-md text-[11px] font-mono border transition-colors
                       ${settings.density === d
-                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
-                        : 'bg-[oklch(0.13_0_0)] text-zinc-400 border-[oklch(1_0_0/10%)] hover:bg-[oklch(1_0_0/5%)]'}`}
+                        ? 'bg-accent/80 text-primary border-primary/30'
+                        : 'bg-[oklch(0.13_0_0)] text-muted-foreground border-[oklch(1_0_0/10%)] hover:bg-[oklch(1_0_0/5%)]'}`}
                   >
                     {d === 'compact' ? '紧凑' : '舒适'}
                   </button>
@@ -273,7 +269,7 @@ export function SettingsDialog() {
               variant="outline"
               size="sm"
               onClick={reset}
-              className="w-full border-[oklch(1_0_0/10%)] bg-[oklch(0.13_0_0)] text-zinc-300 hover:text-white hover:bg-[oklch(1_0_0/8%)]"
+              className="w-full border-[oklch(1_0_0/10%)] bg-[oklch(0.13_0_0)] text-muted-foreground hover:text-white hover:bg-[oklch(1_0_0/8%)]"
             >
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
               重置为默认值
@@ -283,14 +279,14 @@ export function SettingsDialog() {
 
         {/* Footer */}
         <div className="px-5 py-3 border-t border-[oklch(1_0_0/8%)] bg-[oklch(0.18_0_0)] flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-[10px] font-mono text-zinc-500">
-            <Zap className="w-3 h-3 text-emerald-400" />
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/70">
+            <Zap className="w-3 h-3 text-primary" />
             <span>修改实时生效 · 持久化到 localStorage</span>
           </div>
           <Button
             size="sm"
             onClick={close}
-            className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40"
+            className="bg-accent/60 hover:bg-emerald-500/30 text-emerald-200 border border-primary/30"
           >
             完成
           </Button>
@@ -305,7 +301,7 @@ function Section({ icon, title, children }: { icon: React.ReactNode; title: stri
     <section>
       <div className="flex items-center gap-2 mb-3">
         {icon}
-        <h3 className="text-[11px] font-semibold tracking-wider text-zinc-300 uppercase">{title}</h3>
+        <h3 className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{title}</h3>
       </div>
       <div className="space-y-3 pl-1">{children}</div>
     </section>
@@ -326,8 +322,8 @@ function SliderRow({
   return (
     <div>
       <div className="flex items-baseline justify-between mb-1.5">
-        <label className="text-[11px] text-zinc-300">{label}</label>
-        <span className="text-[11px] font-mono font-semibold text-emerald-400 tabular-nums">{value}</span>
+        <label className="text-[11px] text-muted-foreground">{label}</label>
+        <span className="text-[11px] font-mono font-semibold text-primary tabular-nums">{value}</span>
       </div>
       <Slider
         value={[value]}
@@ -337,7 +333,7 @@ function SliderRow({
         onValueChange={(v) => onChange(v[0])}
         className="[&_[role=slider]]:bg-emerald-500 [&_[role=slider]]:border-emerald-400 [&_[role=slider]]:w-3.5 [&_[role=slider]]:h-3.5"
       />
-      <p className="text-[9px] font-mono text-zinc-600 mt-1">{hint}</p>
+      <p className="text-[9px] font-mono text-muted-foreground mt-1">{hint}</p>
     </div>
   )
 }
@@ -353,8 +349,8 @@ function ToggleRow({
   return (
     <div className="flex items-center justify-between py-1">
       <div className="flex-1 min-w-0 pr-3">
-        <div className="text-[11px] text-zinc-300">{label}</div>
-        <div className="text-[9px] font-mono text-zinc-600 mt-0.5">{hint}</div>
+        <div className="text-[11px] text-muted-foreground">{label}</div>
+        <div className="text-[9px] font-mono text-muted-foreground mt-0.5">{hint}</div>
       </div>
       <Switch
         checked={checked}

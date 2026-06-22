@@ -6,6 +6,7 @@
  */
 
 import { db } from '@/lib/db'
+import { maskSensitive } from '@/lib/crypto'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -25,13 +26,15 @@ let logBufferIndex = 0
 
 // ─── 写日志 ─────────────────────────────────────────────
 export function log(level: LogLevel, message: string, module?: string, context?: Record<string, unknown>): string {
+  // PII 脱敏：对 context 里的 wx_id/phone/content 字段自动打码
+  const sanitizedContext = context ? maskSensitive(context) : undefined
   const entry: StructuredLog = {
     id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     level,
     message,
     module,
     timestamp: Date.now(),
-    context,
+    context: sanitizedContext,
   }
 
   // 环形缓冲写入

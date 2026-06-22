@@ -249,7 +249,9 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,  // AUDIT: 沙箱模式，渲染进程无 Node.js 访问
       spellcheck: false,
+      preload: path.join(__dirname, 'preload.js'),  // 注入 waosDesktop + waosUpdater API
     },
     icon: path.join(__dirname, '..', 'public', 'wangcai-logo.png'),
   })
@@ -343,6 +345,42 @@ function createMenu() {
 // ─── App 生命周期 ──────────────────────────────────────────
 app.whenReady().then(async () => {
   console.log('[WAOS-Desktop] App ready, starting services...')
+
+  // ─── PII 加密密钥管理（AUDIT Sprint 1）──────────────────────────
+  // 优先用 Electron safeStorage（系统级加密存储），降级到首次生成
+  try {
+    const { safeStorage } = require('electron')
+    const keyStorePath = path.join(app.getPath('userData'), 'waos-key.enc')
+
+    let masterKeyHex = null
+    if (fs.existsSync(keyStorePath)) {
+      // 读取已存储的加密密钥
+      const encryptedKey = fs.readFileSync(keyStorePath)
+      if (safeStorage.isEncryptionAvailable()) {
+        masterKeyHex = safeStorage.decryptString(encryptedKey)
+        console.log('[Crypto] 从 safeStorage 读取主密钥成功')
+      }
+    }
+
+    if (!masterKeyHex) {
+      // 首次启动：生成新密钥并用 safeStorage 加密存储
+      masterKeyHex = require('crypto').randomBytes(32).toString('hex')
+      if (safeStorage.isEncryptionAvailable()) {
+        const encrypted = safeStorage.encryptString(masterKeyHex)
+        fs.writeFileSync(keyStorePath, encrypted)
+        console.log('[Crypto] 新主密钥已生成并存储到 safeStorage')
+      } else {
+        console.warn('[Crypto] safeStorage 不可用，密钥仅注入环境变量（开发降级）')
+      }
+    }
+
+    // 注入到 Next.js 子进程环境变量（让 Prisma 中间件能读到）
+    process.env.WAOS_ENCRYPTION_KEY = masterKeyHex
+    console.log('[Crypto] 主密钥已注入环境变量')
+  } catch (err) {
+    console.error('[Crypto] 密钥管理失败:', err.message)
+    // 降级：crypto.ts 会用机器指纹派生
+  }
 
   // 并行启动两个服务
   await Promise.all([

@@ -1,0 +1,227 @@
+{
+  "version": 3,
+  "pages404": true,
+  "appType": "app",
+  "caseSensitive": false,
+  "basePath": "",
+  "redirects": [
+    {
+      "source": "/:path+/",
+      "destination": "/:path+",
+      "internal": true,
+      "priority": true,
+      "statusCode": 308,
+      "regex": "^(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))/$"
+    }
+  ],
+  "headers": [],
+  "rewrites": {
+    "beforeFiles": [],
+    "afterFiles": [],
+    "fallback": []
+  },
+  "dynamicRoutes": [
+    {
+      "page": "/api/waos/brain/proxy/[...path]",
+      "regex": "^/api/waos/brain/proxy/(.+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPpath": "nxtPpath"
+      },
+      "namedRegex": "^/api/waos/brain/proxy/(?<nxtPpath>.+?)(?:/)?$"
+    }
+  ],
+  "staticRoutes": [
+    {
+      "page": "/",
+      "regex": "^/(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/(?:/)?$"
+    },
+    {
+      "page": "/_global-error",
+      "regex": "^/_global\\-error(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/_global\\-error(?:/)?$"
+    },
+    {
+      "page": "/_not-found",
+      "regex": "^/_not\\-found(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/_not\\-found(?:/)?$"
+    },
+    {
+      "page": "/api",
+      "regex": "^/api(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api(?:/)?$"
+    },
+    {
+      "page": "/api/waos/asr",
+      "regex": "^/api/waos/asr(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/asr(?:/)?$"
+    },
+    {
+      "page": "/api/waos/auto-reply",
+      "regex": "^/api/waos/auto\\-reply(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/auto\\-reply(?:/)?$"
+    },
+    {
+      "page": "/api/waos/backup",
+      "regex": "^/api/waos/backup(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/backup(?:/)?$"
+    },
+    {
+      "page": "/api/waos/brain",
+      "regex": "^/api/waos/brain(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/brain(?:/)?$"
+    },
+    {
+      "page": "/api/waos/brain/extract",
+      "regex": "^/api/waos/brain/extract(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/brain/extract(?:/)?$"
+    },
+    {
+      "page": "/api/waos/brain/verify",
+      "regex": "^/api/waos/brain/verify(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/brain/verify(?:/)?$"
+    },
+    {
+      "page": "/api/waos/douyin",
+      "regex": "^/api/waos/douyin(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/douyin(?:/)?$"
+    },
+    {
+      "page": "/api/waos/errors",
+      "regex": "^/api/waos/errors(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/errors(?:/)?$"
+    },
+    {
+      "page": "/api/waos/health",
+      "regex": "^/api/waos/health(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/health(?:/)?$"
+    },
+    {
+      "page": "/api/waos/knowledge",
+      "regex": "^/api/waos/knowledge(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/knowledge(?:/)?$"
+    },
+    {
+      "page": "/api/waos/leads",
+      "regex": "^/api/waos/leads(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/leads(?:/)?$"
+    },
+    {
+      "page": "/api/waos/llm",
+      "regex": "^/api/waos/llm(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/llm(?:/)?$"
+    },
+    {
+      "page": "/api/waos/metrics",
+      "regex": "^/api/waos/metrics(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/metrics(?:/)?$"
+    },
+    {
+      "page": "/api/waos/metrics-monitoring",
+      "regex": "^/api/waos/metrics\\-monitoring(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/metrics\\-monitoring(?:/)?$"
+    },
+    {
+      "page": "/api/waos/migrate-encrypt",
+      "regex": "^/api/waos/migrate\\-encrypt(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/migrate\\-encrypt(?:/)?$"
+    },
+    {
+      "page": "/api/waos/moments",
+      "regex": "^/api/waos/moments(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/moments(?:/)?$"
+    },
+    {
+      "page": "/api/waos/monitoring",
+      "regex": "^/api/waos/monitoring(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/monitoring(?:/)?$"
+    },
+    {
+      "page": "/api/waos/reply",
+      "regex": "^/api/waos/reply(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/reply(?:/)?$"
+    },
+    {
+      "page": "/api/waos/reverse",
+      "regex": "^/api/waos/reverse(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/reverse(?:/)?$"
+    },
+    {
+      "page": "/api/waos/safety",
+      "regex": "^/api/waos/safety(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/safety(?:/)?$"
+    },
+    {
+      "page": "/api/waos/sop",
+      "regex": "^/api/waos/sop(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/sop(?:/)?$"
+    },
+    {
+      "page": "/api/waos/tts",
+      "regex": "^/api/waos/tts(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/tts(?:/)?$"
+    },
+    {
+      "page": "/api/waos/vlm",
+      "regex": "^/api/waos/vlm(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/vlm(?:/)?$"
+    },
+    {
+      "page": "/api/waos/wechat",
+      "regex": "^/api/waos/wechat(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/wechat(?:/)?$"
+    },
+    {
+      "page": "/api/waos/wechat-video",
+      "regex": "^/api/waos/wechat\\-video(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/wechat\\-video(?:/)?$"
+    }
+  ],
+  "dataRoutes": [],
+  "rsc": {
+    "header": "rsc",
+    "varyHeader": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch",
+    "prefetchHeader": "next-router-prefetch",
+    "didPostponeHeader": "x-nextjs-postponed",
+    "contentTypeHeader": "text/x-component",
+    "suffix": ".rsc",
+    "prefetchSegmentHeader": "next-router-segment-prefetch",
+    "prefetchSegmentSuffix": ".segment.rsc",
+    "prefetchSegmentDirSuffix": ".segments",
+    "clientParamParsing": false,
+    "dynamicRSCPrerender": false
+  },
+  "rewriteHeaders": {
+    "pathHeader": "x-nextjs-rewritten-path",
+    "queryHeader": "x-nextjs-rewritten-query"
+  }
+}

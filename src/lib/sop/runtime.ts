@@ -338,10 +338,14 @@ async function executeNode(
           appendLog({ status: 'success', output: { waitMs, message: `已等待 ${waitMs / 1000}秒` } })
         } else {
           const resumeAt = Date.now() + waitMs
-          appendLog({ status: 'success', output: { waitMs, resumeAt, message: `长等待 ${waitMs / 1000}秒，实例转为 paused，等待外部调度 resumeInstance` } })
-          // 标记实例暂停，外部调度器应在 resumeAt 后调用 resumeInstance
+          appendLog({ status: 'success', output: { waitMs, resumeAt, message: `长等待 ${waitMs / 1000}秒，已调度自动续跑` } })
+          // Sprint 3: 用 scheduler 自动续跑（不再依赖外部 cron）
           ;(instance.context as any).__resumeAt = resumeAt
           ;(instance.context as any).__waitNodeId = node.id
+          // 动态 import 避免循环依赖
+          import('@/lib/scheduler').then(({ scheduleTask }) => {
+            scheduleTask('sop_resume', { instanceId: instance.id }, waitMs)
+          }).catch(e => console.warn('[SOP] scheduler 调度失败:', e))
           return { shouldStop: true, stopStatus: 'paused' as InstanceStatus }
         }
         return { nextCondition: 'default' }

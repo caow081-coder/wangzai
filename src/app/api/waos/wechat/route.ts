@@ -27,19 +27,19 @@ let replyCount = 0
 
 // 设置事件监听
 bridge.on({
-  onMessage: (from, text) => {
+  onMessage: (from: string, text: string) => {
     messageCount++
     console.log(`[WECHAT] 收到消息 from ${from}: ${text.slice(0, 50)}`)
   },
-  onReply: (to, text) => {
+  onReply: (to: string, text: string) => {
     replyCount++
     console.log(`[WECHAT] 发送回复 to ${to}: ${text.slice(0, 50)}`)
   },
-  onLogin: (accountId) => {
+  onLogin: (accountId: string) => {
     loginStatus = true
     console.log(`[WECHAT] 登录成功: ${accountId}`)
   },
-  onError: (err) => {
+  onError: (err: string | Error) => {
     console.error(`[WECHAT] 错误: ${err}`)
   },
 })

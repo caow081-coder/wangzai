@@ -41,6 +41,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { NoKnowledgeEmpty } from './EmptyStates'
 
 // ─── 常量 ─────────────────────────────────────────────────
 /** 知识库分类列表（与种子数据 schema 对齐） */
@@ -682,23 +683,30 @@ export function KnowledgePanel() {
                   <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                 </div>
               ) : docs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full py-16 text-center">
-                  <Inbox className="w-10 h-10 text-muted-foreground/40 mb-2" />
-                  <p className="text-[12px] text-muted-foreground mb-3">
-                    {activeCategory === '全部' ? '知识库为空' : `「${activeCategory}」分类暂无文档`}
-                  </p>
-                  {stats.total === 0 && (
+                stats.total === 0 ? (
+                  // 全库为空 → 使用 NoKnowledgeEmpty + 导入种子知识 CTA
+                  <NoKnowledgeEmpty
+                    onImportSeed={handleInitSeed}
+                    importing={seeding}
+                    className="h-full"
+                  />
+                ) : (
+                  // 仅当前分类为空 → 简单提示
+                  <div className="flex flex-col items-center justify-center h-full py-16 text-center">
+                    <Inbox className="w-10 h-10 text-muted-foreground/40 mb-2" />
+                    <p className="text-[12px] text-muted-foreground mb-3">
+                      {activeCategory === '全部' ? '知识库为空' : `「${activeCategory}」分类暂无文档`}
+                    </p>
                     <Button
                       size="sm"
-                      onClick={handleInitSeed}
-                      disabled={seeding}
+                      variant="outline"
+                      onClick={() => setActiveCategory('全部')}
                       className="h-7 text-[11px]"
                     >
-                      {seeding ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
-                      初始化 16 条种子知识
+                      查看全部知识
                     </Button>
-                  )}
-                </div>
+                  </div>
+                )
               ) : (
                 <Table>
                   <TableHeader>

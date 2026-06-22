@@ -1734,3 +1734,56 @@ Stage Summary:
 - 安全架构: 6.5→预估9.0(待迁移已有数据后验证)
 - GitHub: commit a17143a
 - 下一阶段: Sprint2 代码净化(删.waos-fix/TS全覆盖/Lint严格)
+
+---
+
+## Sprint 5 — 性能优化 + 体验打磨（2026-06-22）
+
+**任务 ID**：SPRINT5
+**执行者**：性能与 UX 工程师
+**工作记录**：`/agent-ctx/SPRINT5-perf-ux.md`
+
+### 5-1 首次启动引导 Onboarding ✅
+- 新建 `src/components/waos/Onboarding.tsx`（680 行）
+- 4 步向导：欢迎页 / AI 大脑配置 / 人设选择 / 完成页
+- Dialog 全屏弹窗 + Framer Motion 步骤切换动画 + 顶部进度指示器
+- localStorage `waos_onboarding_completed` 标记完成（含 resetOnboarding / isOnboardingCompleted 导出）
+- AI 大脑配置：智谱 GLM-4 默认可用徽章 + 测试连接（POST `/api/waos/brain/verify`）+ 可选豆包/Kimi Cookie 输入
+- 人设选择：5 个卡片（苏念安/顾倾城/叶之秋/陈墨白/江月明）+ 渐变头像 + CVR 标签，选完调用 `setActivePersona` 持久化
+- Skip 按钮 + ESC 跳过；`page.tsx` 中 Splashscreen 淡出后 2.8s 自动弹出
+
+### 5-2 空状态设计 ✅
+- 新建 `src/components/waos/EmptyStates.tsx`（240 行）
+- 5 个组件：`NoLeadsEmpty` / `NoMessagesEmpty` / `NoSopEmpty` / `NoKnowledgeEmpty` / `NoCommentsEmpty` + 通用 `GenericEmpty`
+- 通用 `EmptyStateShell`：emoji 插画 + 柔光背景 + Framer Motion 淡入 + compact 模式 + 深色模式
+- 替换集成：
+  - `DecisionPanel.tsx`：leads 为空 → NoLeadsEmpty（带"去视频号"CTA）；有客户未选中 → 保留原提示
+  - `KnowledgePanel.tsx`：全库为空 → NoKnowledgeEmpty（带"导入种子知识"CTA）；仅分类为空 → "查看全部知识"
+  - `sop/SopRunLog.tsx`：从未运行 SOP → NoSopEmpty；有日志被筛选 → "清除筛选"
+
+### 5-3 全局快捷键 ✅
+- 新建 `src/hooks/waos/useKeyboardShortcuts.ts`（130 行）
+- 支持：`Ctrl/⌘+K` 命令面板 / `Ctrl/⌘+1` 聊天 / `Ctrl/⌘+2` 朋友圈 / `Ctrl/⌘+3` 视频号 / `Ctrl/⌘+4` 设置 / `Ctrl/⌘+5` SOP / `?` 帮助
+- 与 `useKeyboardNav`（J/K/R/Esc/1-3）并存，避免重复触发
+- 输入框内仅响应 `Ctrl/⌘+K`，单键不响应
+- 通过自定义事件 `waos:toggle-shortcuts-help` 解耦 hook 与组件
+- 新建 `src/components/waos/ShortcutsHelp.tsx`（90 行）：分 3 组（导航/操作/帮助）展示 12 个快捷键，`<kbd>` 风格
+- `page.tsx` 接入 `useKeyboardShortcuts()` + `<ShortcutsHelp />`
+
+### 校验结果
+- `npx tsc --noEmit --skipLibCheck`：**0 errors**
+- `npx eslint <8 个新/改文件>`：**0 errors, 0 warnings**
+- dev server log：`✓ Compiled in 324ms` + `GET / 200`，无新引入的编译错误
+- 既有 prisma `SopDefinition/SopInstance` 表不存在错误为 Sprint 5 之前已存在的问题，与本次改动无关
+
+### 文件清单
+**新建（4）**：`Onboarding.tsx` / `EmptyStates.tsx` / `ShortcutsHelp.tsx` / `useKeyboardShortcuts.ts`
+**修改（4）**：`page.tsx` / `DecisionPanel.tsx` / `KnowledgePanel.tsx` / `sop/SopRunLog.tsx`
+
+### 设计原则
+- 颜色：全程 emerald/teal 品牌色 + Tailwind token，无 indigo/blue
+- 深色模式：所有元素通过 `dark:` 适配
+- 无障碍：Dialog 含 sr-only Title/Description，按钮含 aria-pressed，插图含 aria-hidden
+- 移动端：onboarding 卡片 `grid-cols-1 sm:grid-cols-2`，按钮 ≥ 28px
+- 不破坏现有：J/K/R/Esc 等既有快捷键、DecisionPanel 原"选择客户"提示、KnowledgePanel/SopRunLog 分类空提示均保留
+

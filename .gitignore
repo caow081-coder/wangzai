@@ -53,3 +53,8 @@ server.log
 # Skills directory
 /skills/release/
 *.exe
+*.fix.py
+temp/
+*.bak
+.waos-fix/
+tool-results/

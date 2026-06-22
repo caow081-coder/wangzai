@@ -26,6 +26,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import type { SopNodeLog, NodeLogStatus, SopInstance } from '@/lib/sop/types'
+import { NoSopEmpty } from '@/components/waos/EmptyStates'
 
 export interface SopRunLogProps {
   /** 当前选中的实例 ID（null 时显示所有日志） */
@@ -268,12 +269,24 @@ export function SopRunLog({ instanceId, instances, isRunning, defaultExpanded = 
             {/* 日志列表 */}
             <ScrollArea className="flex-1 waos-scrollbar">
               {filteredLogs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full py-8 text-muted-foreground">
-                  <Activity className="w-8 h-8 mb-2 opacity-30" />
-                  <div className="text-xs">
-                    {logs.length === 0 ? '暂无日志，运行 SOP 后将显示执行记录' : '无匹配日志'}
+                logs.length === 0 ? (
+                  // 从未运行过 SOP → NoSopEmpty（无 CTA，由父面板控制创建按钮）
+                  <NoSopEmpty compact className="h-full" />
+                ) : (
+                  // 有日志但被筛选掉 → 简单提示
+                  <div className="flex flex-col items-center justify-center h-full py-8 text-muted-foreground">
+                    <Activity className="w-8 h-8 mb-2 opacity-30" />
+                    <div className="text-xs">无匹配日志</div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-[11px] mt-2"
+                      onClick={() => { setFilterStatus('all'); setSearchQuery('') }}
+                    >
+                      清除筛选
+                    </Button>
                   </div>
-                </div>
+                )
               ) : (
                 <div className="divide-y divide-border/60">
                   {filteredLogs.map((log, idx) => (

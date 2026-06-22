@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useOpsStore } from '@/store/useOpsStore'
 import { useKeyboardNav } from '@/hooks/waos/useKeyboardNav'
+import { useKeyboardShortcuts } from '@/hooks/waos/useKeyboardShortcuts'
 import { usePersistence } from '@/hooks/waos/usePersistence'
 import { TopBar } from '@/components/waos/TopBar'
 import { WeChatClient } from '@/components/waos/WeChatClient'
@@ -22,14 +23,32 @@ import { Splashscreen } from '@/components/waos/Splashscreen'
 import { ErrorBoundary } from '@/components/waos/ErrorBoundary'
 import { UpdateChecker } from '@/components/waos/UpdateChecker'
 import { KnowledgePanel } from '@/components/waos/KnowledgePanel'
+import { Onboarding } from '@/components/waos/Onboarding'
+import { ShortcutsHelp } from '@/components/waos/ShortcutsHelp'
 
 export default function Home() {
   const connect = useOpsStore(s => s.connect)
   const disconnect = useOpsStore(s => s.disconnect)
   const connection = useOpsStore(s => s.connection)
+  const [showOnboarding, setShowOnboarding] = useState(false)
 
   useKeyboardNav()
+  useKeyboardShortcuts()
   usePersistence()
+
+  // Sprint 5-1: 首次启动 Onboarding 引导
+  useEffect(() => {
+    try {
+      const completed = localStorage.getItem('waos_onboarding_completed') === 'true'
+      if (!completed) {
+        // 等 Splashscreen 淡出后再弹出（2.5s），避免视觉打架
+        const t = setTimeout(() => setShowOnboarding(true), 2800)
+        return () => clearTimeout(t)
+      }
+    } catch {
+      // localStorage 被禁用（隐私模式）— 不弹引导
+    }
+  }, [])
 
   useEffect(() => {
     connect()
@@ -69,6 +88,10 @@ export default function Home() {
       <KnowledgePanel />
       <DownloadFloat />
       <UpdateChecker />
+      {/* Sprint 5-1: 首次启动引导 */}
+      {showOnboarding && <Onboarding onComplete={() => setShowOnboarding(false)} />}
+      {/* Sprint 5-3: 快捷键帮助面板（按 ? 召唤）*/}
+      <ShortcutsHelp />
       {connection !== 'connected' && (
         <div className="fixed top-16 right-4 z-50 px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 border border-amber-500/30 backdrop-blur">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse mr-1.5 align-middle" />

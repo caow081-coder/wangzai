@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
-    "noImplicitAny": false,
+    "noImplicitAny": true,  // AUDIT Sprint2: 禁止隐式 any
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",

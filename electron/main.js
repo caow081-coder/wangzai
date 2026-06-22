@@ -26,6 +26,31 @@ let mainWindow = null
 let nextProcess = null
 let streamProcess = null
 
+// AUDIT-REL Sprint 4-1: 崩溃恢复 + crash.log ──────────────────────────────
+// 标记应用是否正在主动退出（用于区分 Next.js 子进程是"被我们 kill"还是"自己崩溃"）
+app.isQuitting = false
+
+// 崩溃计数窗口：60 秒内崩溃超过 3 次则不再 relaunch，避免无限重启循环
+let crashCounter = 0
+let crashWindowStart = Date.now()
+const CRASH_WINDOW_MS = 60 * 1000
+const CRASH_MAX_IN_WINDOW = 3
+
+/**
+ * 写入 crash.log 到 userData 目录（追加模式）
+ * 格式：[ISO 时间] 错误消息 / 堆栈 / 上下文 JSON
+ */
+function writeCrashLog(error, context) {
+  try {
+    const logPath = path.join(app.getPath('userData'), 'crash.log')
+    const errObj = error instanceof Error ? error : new Error(String(error))
+    const entry = `[${new Date().toISOString()}] ${errObj.message}\n${errObj.stack || ''}\nContext: ${JSON.stringify(context || {})}\n---\n`
+    fs.appendFileSync(logPath, entry, { encoding: 'utf8' })
+  } catch (err) {
+    console.error('[CrashLog] 写入失败:', err?.message || err)
+  }
+}
+
 // ─── 自动更新（仅生产模式启用）──────────────────────────────
 // 使用 electron-updater 从 GitHub Releases 拉取 latest.yml 比对版本。
 // 开发模式（!app.isPackaged）下 autoUpdater 保持 null，所有 IPC 返回降级响应。
@@ -232,6 +257,25 @@ async function startNextServer() {
   nextProcess.on('error', (err) => {
     console.error('[Next.js] Failed to start:', err.message)
   })
+
+  // AUDIT-REL Sprint 4-1: Next.js 子进程崩溃监听
+  // exit code !== 0 且非主动退出：5 秒后自动重启，并写入 crash.log
+  nextProcess.on('exit', (code) => {
+    if (app.isQuitting) return
+    if (code === 0) return
+    console.error(`[WAOS-Desktop] Next.js 异常退出(code=${code}), 5 秒后重启...`)
+    writeCrashLog(new Error(`Next.js child process exit code ${code}`), {
+      pid: nextProcess?.pid,
+      port: NEXT_PORT,
+      isDev,
+    })
+    setTimeout(() => {
+      if (app.isQuitting) return
+      startNextServer().catch((e) => {
+        console.error('[WAOS-Desktop] Next.js 重启失败:', e?.message || e)
+      })
+    }, 5000)
+  })
 }
 
 // ─── 创建主窗口 ────────────────────────────────────────────
@@ -401,6 +445,34 @@ app.whenReady().then(async () => {
   createWindow()
   createMenu()
 
+  // AUDIT Sprint 4-3: 启动数据库自动备份服务（每24小时，保留7天）
+  try {
+    const { startScheduledBackup } = require('./standalone-backup.js')
+    startScheduledBackup()
+  } catch (e) {
+    console.warn('[Backup] 备份服务启动失败（Next.js 进程内会另起）:', e?.message || e)
+  }
+
+  // AUDIT-REL Sprint 4-1: 启动时检测 crash.log，提示用户"上次异常退出，是否发送报告"
+  // 延迟 5 秒（等待渲染进程就绪），通过 IPC 通知 mainWindow 弹窗
+  try {
+    const crashPath = path.join(app.getPath('userData'), 'crash.log')
+    if (fs.existsSync(crashPath)) {
+      const content = fs.readFileSync(crashPath, 'utf8')
+      if (content && content.trim()) {
+        const lastLog = content.slice(-2000)
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('crash-detected', { log: lastLog })
+            console.log('[WAOS-Desktop] 已通知渲染进程：上次异常退出，crash.log 已读取')
+          }
+        }, 5000)
+      }
+    }
+  } catch (err) {
+    console.warn('[WAOS-Desktop] 读取 crash.log 失败:', err?.message || err)
+  }
+
   // 启动时检查更新（仅生产模式 + electron-updater 已加载时）
   if (autoUpdater) {
     // 延迟 3 秒检查，避免与 Next.js 初始化抢资源
@@ -439,6 +511,8 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  // AUDIT-REL Sprint 4-1: 标记主动退出，避免触发 Next.js 子进程 exit handler 误重启
+  app.isQuitting = true
   // AUDIT-SYS: 清理 autoUpdater 定时器，避免内存泄漏
   if (updaterInterval) {
     clearInterval(updaterInterval)
@@ -482,9 +556,15 @@ process.on('unhandledRejection', (reason, promise) => {
 
 process.on('uncaughtException', (err) => {
   console.error('[WAOS-Desktop] 未捕获的同步异常:', err?.stack || err)
-  // 同步异常通常意味着状态已损坏，但桌面应用闪退体验更差
-  // 这里记录后继续运行，由用户决定是否重启
-  // 如果是主窗口崩溃，Electron 自身的 crashReporter 会处理
+
+  // AUDIT-REL Sprint 4-1: 写入 crash.log（时间 + 错误堆栈 + 上下文）
+  writeCrashLog(err, {
+    pid: process.pid,
+    uptime: process.uptime(),
+    kind: 'uncaughtException',
+  })
+
+  // 通知渲染进程（保留原行为：上层业务逻辑自己决定是否提示用户）
   try {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('app-error', {
@@ -494,6 +574,23 @@ process.on('uncaughtException', (err) => {
       })
     }
   } catch { /* noop */ }
+
+  // AUDIT-REL Sprint 4-1: 主进程崩溃自动 relaunch + quit
+  // 防循环保护：60 秒窗口内崩溃次数 >3 则不再 relaunch，直接 exit(1)
+  const now = Date.now()
+  if (now - crashWindowStart > CRASH_WINDOW_MS) {
+    crashWindowStart = now
+    crashCounter = 0
+  }
+  crashCounter++
+  if (crashCounter <= CRASH_MAX_IN_WINDOW) {
+    console.error(`[WAOS-Desktop] 崩溃计数 ${crashCounter}/${CRASH_MAX_IN_WINDOW}，准备 relaunch...`)
+    try { app.relaunch() } catch (_) { /* noop */ }
+    try { app.quit() } catch (_) { /* noop */ }
+  } else {
+    console.error('[WAOS-Desktop] 短时间崩溃次数过多，跳过 relaunch 避免循环，直接退出')
+    try { app.exit(1) } catch (_) { process.exit(1) }
+  }
 })
 
 // AUDIT-SEC-REL: GPU 进程崩溃自动恢复

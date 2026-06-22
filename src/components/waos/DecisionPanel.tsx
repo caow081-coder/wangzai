@@ -16,9 +16,12 @@ import { Slider } from '@/components/ui/slider'
 import { Label } from '@/components/ui/label'
 // Phase 6: 工作台 SOP 触发器（运行按钮 + 实例状态卡片）
 import { SopRunButton, SopInstanceCard } from './SopRunner'
+import { NoLeadsEmpty } from './EmptyStates'
 
 export function DecisionPanel() {
   const lead = useOpsStore(s => s.leads.find(l => l.id === s.clientViewLeadId) || null)
+  const leadsCount = useOpsStore(s => s.leads.length)
+  const setClientTab = useOpsStore(s => s.setClientTab)
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
@@ -27,7 +30,7 @@ export function DecisionPanel() {
 
       {/* 滚动区域 */}
       <div className="flex-1 min-h-0 overflow-y-auto waos-scrollbar">
-        {!lead ? <EmptyState /> : (
+        {!lead ? <EmptyState hasLeads={leadsCount > 0} onGoChannels={() => setClientTab('channels')} /> : (
           <>
             {/* 客户头部（首屏立即可见）*/}
             <LeadHeader />
@@ -115,7 +118,16 @@ function CompactTopBar() {
   )
 }
 
-function EmptyState() {
+function EmptyState({ hasLeads = true, onGoChannels }: { hasLeads?: boolean; onGoChannels?: () => void }) {
+  // 没有任何客户 → 使用 NoLeadsEmpty（带 CTA 去视频号截流）
+  if (!hasLeads) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <NoLeadsEmpty onGoChannels={onGoChannels} />
+      </div>
+    )
+  }
+  // 有客户但未选中 → 引导用户选择
   return (
     <div className="flex flex-col items-center justify-center h-full text-center px-8">
       <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center mb-4 shadow-sm">

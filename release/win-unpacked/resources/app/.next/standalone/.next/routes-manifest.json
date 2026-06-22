@@ -68,6 +68,12 @@
       "namedRegex": "^/api/waos/auto\\-reply(?:/)?$"
     },
     {
+      "page": "/api/waos/backup",
+      "regex": "^/api/waos/backup(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/backup(?:/)?$"
+    },
+    {
       "page": "/api/waos/brain",
       "regex": "^/api/waos/brain(?:/)?$",
       "routeKeys": {},
@@ -128,10 +134,28 @@
       "namedRegex": "^/api/waos/metrics(?:/)?$"
     },
     {
+      "page": "/api/waos/metrics-monitoring",
+      "regex": "^/api/waos/metrics\\-monitoring(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/metrics\\-monitoring(?:/)?$"
+    },
+    {
+      "page": "/api/waos/migrate-encrypt",
+      "regex": "^/api/waos/migrate\\-encrypt(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/migrate\\-encrypt(?:/)?$"
+    },
+    {
       "page": "/api/waos/moments",
       "regex": "^/api/waos/moments(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/api/waos/moments(?:/)?$"
+    },
+    {
+      "page": "/api/waos/monitoring",
+      "regex": "^/api/waos/monitoring(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/waos/monitoring(?:/)?$"
     },
     {
       "page": "/api/waos/reply",

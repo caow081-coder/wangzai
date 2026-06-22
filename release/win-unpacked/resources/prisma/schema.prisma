@@ -1,0 +1,224 @@
+// WAOS 旺财 Prisma Schema
+// 数据持久层：消息表 + CRM线索表(乐观锁) + 评论表 + 人设表
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── 消息表 ─────────────────────────────────────────────
+// 对应 WAOS-X: 消息表(id/wx_id/role/content/timestamp)
+model Message {
+  id          String   @id @default(cuid())
+  wxId        String   // 微信/抖音/视频号 用户外部ID
+  leadId      String?  // 关联的线索ID（可选）
+  role        String   // user | assistant | human | system
+  content     String   // 消息内容
+  source      String   @default("wechat_dm") // wechat_dm | wechat_comment | douyin_dm | douyin_comment | video_dm | video_comment
+  intentLabel String?  // PRICE | REJECTION | SILENCE_BREAK | GENERAL
+  intentScore Int?     // 意向置信度 0-100
+  urgency     Int?     // 紧迫度 0-100
+  safetyFiltered Boolean @default(false) // 是否被安全护盾过滤
+  safetyReason String? // 过滤原因
+  latency     Int?     // AI 响应延迟 ms
+  tokensUsed  Int?     // token 消耗
+  model       String?  // 使用的模型
+  timestamp   DateTime @default(now())
+
+  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@index([wxId, timestamp])
+  @@index([leadId])
+}
+
+// ─── CRM 线索表（带乐观锁 version 字段）─────────────────
+// 对应 WAOS-X: CRM线索表(id/name/intent/value/status/version)
+model Lead {
+  id            String   @id @default(cuid())
+  externalId    String   @unique // wx_xxx / dy_xxx
+  name          String   // 客户姓名
+  source        String   @default("wechat") // wechat | douyin | video
+  intentScore   Int      @default(50) // 意向分 0-100
+  valueScore    Int      @default(50) // 价值分 0-100
+  priorityScore Int      @default(50) // 优先级分 0-100
+  stage         String   @default("new") // new | following | hot | won | lost
+  status        String   @default("new") // new | following | high_intent | won | lost (WAOS-X 状态机)
+  version       Int      @default(1) // 乐观锁版本号
+  personaName   String?  // 分配的人设
+  personaColor  String?  // 人设颜色
+  tags          String   @default("[]") // JSON 数组
+  lastMessage   String?  // 最后一条消息
+  lastTouchAt   DateTime? // 最后接触时间
+  unread        Boolean  @default(false)
+  isSpam        Boolean  @default(false)
+  alreadyCustomer Boolean @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  messages      Message[]
+
+  @@index([status])
+  @@index([stage])
+  @@index([intentScore])
+}
+
+// ─── 评论表（视频号/抖音/朋友圈评论截流）─────────────────
+model Comment {
+  id            String   @id @default(cuid())
+  externalId    String   @unique // 评论外部ID
+  platform      String   // douyin | wechat_video | moments
+  userId        String   // 评论者ID
+  userName      String   // 评论者名
+  avatar        String?
+  content       String   // 评论内容
+  videoId       String?  // 视频/动态ID
+  videoTitle    String?
+  videoPlayCount Int     @default(0)
+  videoLikeCount Int     @default(0)
+  intentScore   Int      @default(50) // 意向分 0-100
+  intentReason  String?
+  replyStatus   String   @default("pending") // pending | replied | dm_sent
+  aiReply       String?
+  timestamp     DateTime @default(now())
+
+  @@index([platform, replyStatus])
+  @@index([intentScore])
+  @@index([videoPlayCount])
+}
+
+// ─── 人设表（5 个奔驰销售人设）─────────────────
+model Persona {
+  id          String   @id
+  name        String
+  shortName   String
+  role        String   // sales | service | bd | marketing
+  emoji       String
+  color       String
+  description String
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+// ─── 事件日志表（事件总线信号持久化）─────────────────
+model EventLog {
+  id          String   @id @default(cuid())
+  type        String   // status_update | new_bubble | update_leads | show_takeover | log_msg | safety_block
+  payload     String   // JSON
+  timestamp   DateTime @default(now())
+
+  @@index([type, timestamp])
+}
+
+// ─── AI 调用记录（多模型降级追踪）─────────────────
+model AiCall {
+  id          String   @id @default(cuid())
+  model       String   // zhipu_api | doubao | qianwen | kimi | zhipu | zai
+  success     Boolean
+  latency     Int      // ms
+  tokensUsed  Int      @default(0)
+  reply       String?
+  error       String?
+  fallbackChain String? // JSON
+  timestamp   DateTime @default(now())
+
+  @@index([model, timestamp])
+  @@index([success])
+}
+
+// ─── SOP 引擎：4 张表（对齐 WAOS-X SOP 引擎设计）─────────────────
+
+// SOP 定义表：流程定义（JSON 格式的节点+连线）
+model SopDefinition {
+  id                String   @id @default(cuid())
+  name              String
+  description       String?
+  triggerType       String   @default("manual") // manual | auto_schedule | auto_event
+  triggerCondition  String?  // JSON: {"intent":"PRICE","minValue":80}
+  nodes             String   // JSON: 所有节点定义
+  edges             String   // JSON: 节点连线关系
+  category          String   @default("默认流程") // 默认流程 | 营销流程 | 售后流程
+  isActive          Boolean  @default(true)
+  version           Int      @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  instances         SopInstance[]
+
+  @@index([category, isActive])
+}
+
+// SOP 执行实例表：每次执行的状态追踪
+model SopInstance {
+  id                String   @id @default(cuid())
+  sopDefinitionId   String
+  customerId        String   // 客户/线索 ID
+  currentNodeId     String?  // 当前所在节点
+  status            String   @default("running") // running | paused | completed | failed | aborted
+  context           String   @default("{}") // JSON: 执行上下文
+  startedAt         DateTime @default(now())
+  completedAt       DateTime?
+  updatedAt         DateTime @updatedAt
+
+  definition        SopDefinition @relation(fields: [sopDefinitionId], references: [id], onDelete: Cascade)
+  nodeLogs          SopNodeLog[]
+
+  @@index([customerId, status])
+  @@index([status])
+}
+
+// SOP 节点日志表：每个节点执行日志
+model SopNodeLog {
+  id                String   @id @default(cuid())
+  sopInstanceId     String
+  nodeId            String
+  nodeName          String?
+  skillName         String?
+  input             String?  // JSON
+  output            String?  // JSON
+  status            String   @default("success") // success | failed | skipped | running
+  errorMessage      String?
+  startedAt         DateTime @default(now())
+  completedAt       DateTime?
+  durationMs        Int      @default(0)
+
+  instance          SopInstance @relation(fields: [sopInstanceId], references: [id], onDelete: Cascade)
+
+  @@index([sopInstanceId, startedAt])
+}
+
+// Skill 注册表：用于 UI 工具箱展示
+model SkillRegistry {
+  id                String   @id
+  name              String
+  description       String
+  category          String   // recognition | evaluation | generation | execution | notification
+  inputSchema       String   // JSON Schema
+  outputSchema      String   // JSON Schema
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  @@index([category, isActive])
+}
+
+// ─── RAG 知识库（奔驰销售知识库）─────────────────
+model KnowledgeDoc {
+  id          String   @id @default(cuid())
+  title       String
+  content     String   // 原文内容
+  category    String   @default("车型") // 车型 | 配置 | 价格 | 金融 | 保养 | 试驾 | 竞品 | FAQ
+  tags        String   @default("[]")  // JSON 数组
+  keywords    String   @default("")   // 空格分隔的关键词（用于全文检索）
+  vector      String?  // JSON 向量（简化版：TF-IDF 或 hash，生产用 embeddings）
+  source      String   @default("manual") // manual | imported | official
+  priority    Int      @default(50)  // 优先级 0-100，高优先级匹配先返回
+  hitCount    Int      @default(0)   // 被检索命中次数
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@index([priority])
+}

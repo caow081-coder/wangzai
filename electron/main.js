@@ -224,10 +224,15 @@ async function startNextServer() {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
   } else {
-    // 生产模式: 用 standalone server
+    // 生产模式: 用 standalone server（不依赖 bun，纯 node 运行）
     const standalonePath = path.join(projectRoot, '.next', 'standalone')
-    if (fs.existsSync(standalonePath)) {
-      nextProcess = spawn('node', ['server.js'], {
+    const standaloneServer = path.join(standalonePath, 'server.js')
+    console.log(`[WAOS-Desktop] Standalone path: ${standalonePath}`)
+    console.log(`[WAOS-Desktop] server.js exists: ${fs.existsSync(standaloneServer)}`)
+
+    if (fs.existsSync(standaloneServer)) {
+      // ✅ 正常路径：node server.js（Windows/Mac/Linux 都有 node）
+      nextProcess = spawn(process.execPath, ['server.js'], {
         cwd: standalonePath,
         env: {
           ...process.env,
@@ -237,13 +242,21 @@ async function startNextServer() {
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       })
+      console.log(`[WAOS-Desktop] Next.js standalone 已启动 (PID: ${nextProcess.pid})`)
     } else {
-      // fallback to next start
-      nextProcess = spawn('bun', ['run', 'start'], {
-        cwd: projectRoot,
-        env: { ...process.env, NODE_ENV: 'production' },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
+      // ❌ standalone 不存在：这是严重错误，显示对话框告知用户
+      console.error('[WAOS-Desktop] ❌ standalone server.js 不存在！打包可能不完整。')
+      console.error(`[WAOS-Desktop] 预期路径: ${standaloneServer}`)
+      // 显示错误对话框（Electron 原生 dialog）
+      try {
+        const { dialog } = require('electron')
+        dialog.showErrorBox(
+          '旺财启动失败',
+          `打包文件不完整，缺少 server.js。\n\n预期路径: ${standaloneServer}\n\n请重新安装或联系技术支持。`
+        )
+      } catch (_) {}
+      app.quit()
+      return
     }
   }
 
@@ -286,8 +299,8 @@ function createWindow() {
     minWidth: 1200,
     minHeight: 700,
     title: '旺财 · AI 私域营销助手',
-    backgroundColor: '#f7f9fa',
-    show: false,
+    backgroundColor: '#1a1a1a',
+    show: true,  // 启动时立即显示加载页面
     autoHideMenuBar: true,
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     webPreferences: {
@@ -433,16 +446,46 @@ app.whenReady().then(async () => {
   ])
 
   // 等待 Next.js 就绪
+  console.log('[WAOS-Desktop] Waiting for Next.js to be ready...')
+  // 先创建窗口显示加载中（不白屏等待）
+  createWindow()
+  if (mainWindow) {
+    mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+      <html><body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#1a1a1a;color:#e0e0e0;font-family:sans-serif;">
+      <div style="text-align:center">
+      <div style="font-size:48px;margin-bottom:16px">🐕</div>
+      <div style="font-size:18px;font-weight:600;margin-bottom:8px">旺财启动中...</div>
+      <div style="font-size:12px;color:#888">正在加载 AI 销售助手，请稍候</div>
+      <div style="margin-top:20px;width:200px;height:3px;background:#333;border-radius:2px;overflow:hidden">
+      <div style="width:100%;height:100%;background:#10b981;animation:pulse 1.5s ease-in-out infinite"></div>
+      </div>
+      <style>@keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}</style>
+      </div></body></html>
+    `)}`)
+  }
   try {
-    console.log('[WAOS-Desktop] Waiting for Next.js to be ready...')
     await waitForServer(`http://localhost:${NEXT_PORT}`, 120000)
     console.log('[WAOS-Desktop] Next.js ready!')
+    // Next.js 就绪后加载真实页面
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.loadURL(`http://localhost:${NEXT_PORT}`)
+    }
   } catch (e) {
     console.error('[WAOS-Desktop] Next.js failed to start:', e.message)
-    console.error('[WAOS-Desktop] Loading anyway (might show error page)...')
+    // 显示错误页面
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+        <html><body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#1a1a1a;color:#e0e0e0;font-family:sans-serif;">
+        <div style="text-align:center;max-width:400px;padding:20px">
+        <div style="font-size:48px;margin-bottom:16px">⚠️</div>
+        <div style="font-size:18px;font-weight:600;margin-bottom:8px;color:#ef4444">启动失败</div>
+        <div style="font-size:12px;color:#888;margin-bottom:16px">${e.message}</div>
+        <div style="font-size:11px;color:#666">请尝试：1. 关闭后重新打开 2. 检查端口 3000 是否被占用 3. 联系技术支持</div>
+        </div></body></html>
+      `)}`)
+    }
   }
 
-  createWindow()
   createMenu()
 
   // AUDIT Sprint 4-3: 启动数据库自动备份服务（每24小时，保留7天）

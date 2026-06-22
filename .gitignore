@@ -1,23 +1,54 @@
-node_modules/
-.next/
-release/
-*.log
-*.AppImage
-*.tar.gz
-tool-results/
-tsconfig.tsbuildinfo
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+
+# typescript
 *.tsbuildinfo
+next-env.d.ts
+local-*
+.claude
+.z-ai-config
+*.log
+dev.log
+dev.out.log
+test
+prompt
 
-# AUDIT-SEC-REL: 敏感配置文件禁止提交到 git（含 ZHIPU_API_KEY 等密钥）
-.env
-.env.*
-!.env.example
-.env.local
-.env.production
-.env.development
-
-# 数据库文件不入库（包含客户线索/对话历史等业务数据）
-db/*.db
-db/*.db-journal
-db/*.db-wal
-db/*.db-shm
+server.log
+# Skills directory
+/skills/

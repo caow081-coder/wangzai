@@ -1,43 +1,23 @@
-# AUDIT-SEC-REL: 限制 XTransformPort 必须为 3000-3999 范围内的端口
-# 之前直接 `localhost:{query.XTransformPort}` 可被攻击者设为任意端口
-# （如 ?XTransformPort=22 探测 SSH、?XTransformPort=6379 探测 Redis）
-# 形成 SSRF。修复：用 map + 正则白名单只允许 3000-3999（旺财内部服务端口段）。
 :81 {
-        @transform_port_query {
-                query XTransformPort=*
-        }
+	@transform_port_query {
+		query XTransformPort=*
+	}
 
-        map {query.XTransformPort} {allowed_port} {
-                # 仅允许 3000-3999 端口段
-                ~^3[0-9]{3}$ {query.XTransformPort}
-                default ""
-        }
+	handle @transform_port_query {
+		reverse_proxy localhost:{query.XTransformPort} {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
 
-        @has_valid_port {
-                expression {allowed_port} != ""
-        }
-
-        handle @transform_port_query @has_valid_port {
-                reverse_proxy localhost:{allowed_port} {
-                        header_up Host {host}
-                        header_up X-Forwarded-For {remote_host}
-                        header_up X-Forwarded-Proto {scheme}
-                        header_up X-Real-IP {remote_host}
-                }
-        }
-
-        handle @transform_port_query {
-                # 端口不在白名单 → 返回 400，避免 SSRF 探测
-                respond "Invalid XTransformPort (allowed: 3000-3999)" 400
-        }
-
-        handle {
-                reverse_proxy localhost:3000 {
-                        header_up Host {host}
-                        header_up X-Forwarded-For {remote_host}
-                        header_up X-Forwarded-Proto {scheme}
-                        header_up X-Real-IP {remote_host}
-                }
-        }
+	handle {
+		reverse_proxy localhost:3000 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
 }
-

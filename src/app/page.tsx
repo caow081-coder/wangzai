@@ -46,13 +46,15 @@ export default function Home() {
             <WeChatClient />
           </ErrorBoundary>
         </div>
-        <div className="w-[400px] min-w-[340px] max-w-[460px] flex flex-col bg-background">
+        {/* 右侧决策面板：加宽到 460px，最小 380px，最大 560px，避免内容拥挤 */}
+        <div className="w-[460px] min-w-[380px] max-w-[560px] flex flex-col bg-background border-l border-border/60">
           <ErrorBoundary>
             <DecisionPanel />
           </ErrorBoundary>
         </div>
       </div>
-      <div className="h-[140px] min-h-[100px] max-h-[200px] bg-zinc-950 border-t border-border">
+      {/* 底部事件流：深色背景用设计 token 而非硬编码 zinc-950 */}
+      <div className="h-[140px] min-h-[100px] max-h-[200px] bg-zinc-950 dark:bg-zinc-950 border-t border-border">
         <EventStream />
       </div>
       <ReplyStudio />

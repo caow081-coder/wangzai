@@ -1787,3 +1787,42 @@ Stage Summary:
 - 移动端：onboarding 卡片 `grid-cols-1 sm:grid-cols-2`，按钮 ≥ 28px
 - 不破坏现有：J/K/R/Esc 等既有快捷键、DecisionPanel 原"选择客户"提示、KnowledgePanel/SopRunLog 分类空提示均保留
 
+
+---
+Task ID: Sprint2-5全量推进(对齐6.22审计优化)
+Agent: 主 Claude + subagent
+Task: 6.22审计优化Sprint2-5全部完成,最终审计
+
+Work Log:
+- Sprint 2 代码净化:
+  - 删除.waos-fix/(10脚本1011行)
+  - .gitignore补全(.waos-fix/*.fix.py/temp/*.bak)
+  - tsconfig noImplicitAny false→true(禁止隐式any)
+  - 修复wechat/route.ts 6处隐式any
+- Sprint 3 架构解耦:
+  - scheduler.ts: 任务队列+调度器(sop_resume自动续跑+followup)
+  - cache.ts: 内存缓存层(cacheGetOrSet穿透保护)
+  - SOP runtime wait>30s: 改用scheduler自动续跑
+- Sprint 4 可观测性:
+  - backup.ts: 数据库自动备份(每24h/保留7天)
+  - standalone-backup.js: Electron版备份
+  - metrics.ts: 性能指标埋点(measure/recordMetric)
+  - API: /backup + /monitoring
+  - 崩溃恢复: writeCrashLog+app.relaunch+nextProcess监听
+- Sprint 5 性能+体验(派subagent):
+  - Onboarding.tsx(680行): 4步引导
+  - EmptyStates.tsx(240行): 5个空状态
+  - useKeyboardShortcuts.ts(130行): 全局快捷键
+  - ShortcutsHelp.tsx(90行): 帮助面板
+- 验证: tsc 0/lint 0/next build成功/electron-builder 222MB
+- git push (commit b0ec9fc)
+
+Stage Summary:
+- 6.22审计Sprint 1-5全部完成(Sprint6帮助中心已含ShortcutsHelp)
+- 27 API route(新增backup/monitoring/migrate-encrypt/errors)
+- 36 组件(新增Onboarding/EmptyStates/ShortcutsHelp)
+- 安全: PII加密+日志脱敏+Electron sandbox
+- 可靠: 崩溃恢复+自动备份+任务队列
+- 可观测: 性能指标+错误追踪+结构化日志
+- 体验: Onboarding+空状态+全局快捷键
+- GitHub: commit b0ec9fc

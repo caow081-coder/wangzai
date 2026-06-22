@@ -1,0 +1,3 @@
+{
+  "/api/waos/migrate-encrypt/route": "app/api/waos/migrate-encrypt/route.js"
+}

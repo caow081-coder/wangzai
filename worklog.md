@@ -1684,3 +1684,24 @@ Stage Summary:
 - 右侧面板加宽60px,内容清晰可见
 - 打包成功: 旺财.exe 222MB
 - GitHub: commit 29550f5, 大文件已清理
+
+---
+Task ID: 主轮次-右侧首屏可见+打包
+Agent: 主 Claude
+Task: 修复右侧首屏看不到客户信息 + 打包
+
+Work Log:
+- VLM审计确认: 右侧首屏看不到客户信息
+- 根因: MonitorBar(5列) + StressMonitorPanel 占满顶部,客户信息被推到滚动区下方
+- 修复: 合并为CompactTopBar(1行28px),省60px给客户信息
+- section重排: 客户头部→快捷动作→SOP→推荐话术(首屏可见)
+  压测监控移底部,长尾折叠
+- VLM验证: 首屏能看到林晚秋+意向85分+HOT ✅
+- next build + electron-builder: 旺财.exe 222MB ✅
+- tsc 0错误, lint 0 errors
+- git push (commit a1c9876)
+
+Stage Summary:
+- 右侧首屏客户信息可见(核心修复)
+- 打包成功: 旺财.exe 222MB
+- GitHub: commit a1c9876

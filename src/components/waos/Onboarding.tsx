@@ -190,7 +190,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
     <Dialog open onOpenChange={(o) => { if (!o) handleSkip() }}>
       <DialogContent
         showCloseButton={false}
-        className="max-w-3xl p-0 gap-0 overflow-hidden h-[88vh] max-h-[760px] min-h-[560px]"
+        className="max-w-2xl p-0 gap-0 overflow-hidden h-[78vh] max-h-[680px] min-h-[520px] shadow-2xl"
         aria-describedby="onboarding-desc"
       >
         <DialogTitle className="sr-only">旺财首次启动引导</DialogTitle>

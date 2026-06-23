@@ -334,7 +334,7 @@ export async function GET(req: NextRequest) {
   }
   return NextResponse.json({
     service: 'WAOS AI Reply Studio',
-    version: '3.0',
+    version: '4.0',
     pipeline: [
       'input_sanitization',
       'circuit_breaker_check',

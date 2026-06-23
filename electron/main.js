@@ -217,10 +217,13 @@ async function startNextServer() {
   console.log(`[WAOS-Desktop] Starting Next.js from ${projectRoot} (dev=${isDev})`)
 
   if (isDev) {
-    // 开发模式: next dev
+    // 开发模式: next dev — 清除代理防止 .bashrc 注入
+    const cleanEnv = { ...process.env }
+    delete cleanEnv.HTTP_PROXY; delete cleanEnv.HTTPS_PROXY
+    delete cleanEnv.http_proxy; delete cleanEnv.https_proxy
     nextProcess = spawn('bun', ['run', 'dev'], {
       cwd: projectRoot,
-      env: { ...process.env, FORCE_COLOR: '1' },
+      env: { ...cleanEnv, FORCE_COLOR: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
   } else {
@@ -253,10 +256,16 @@ async function startNextServer() {
 
     if (fs.existsSync(standaloneServer)) {
       // ✅ 正常路径：node server.js（Windows/Mac/Linux 都有 node）
+      // 清除代理环境变量，防止 .bashrc 注入的死代理杀死进程
+      const cleanEnv = { ...process.env }
+      delete cleanEnv.HTTP_PROXY
+      delete cleanEnv.HTTPS_PROXY
+      delete cleanEnv.http_proxy
+      delete cleanEnv.https_proxy
       nextProcess = spawn(process.execPath, ['server.js'], {
         cwd: serverCwd,
         env: {
-          ...process.env,
+          ...cleanEnv,
           NODE_ENV: 'production',
           PORT: String(NEXT_PORT),
           HOSTNAME: '0.0.0.0',

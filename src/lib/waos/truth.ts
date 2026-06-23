@@ -107,7 +107,8 @@ function detectConflict(claim: string, truth: { title: string; content: string; 
     const claimPrices = extractPrices(claim)
     for (const cp of claimPrices) {
       for (const tp of truthPrices) {
-        // 价格相差超过 10% 视为冲突
+        // 防止除零：真理价格为0时跳过价格比较
+        if (tp === 0) continue
         if (Math.abs(cp - tp) / tp > 0.1) {
           return `价格冲突: 声明报价 ${cp} vs 真理价格 ${tp}`
         }

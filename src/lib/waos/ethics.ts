@@ -72,7 +72,7 @@ const BUILTIN_RULES: { name: string; pattern: RegExp; action: 'block' | 'warn' |
   },
   {
     name: '贬低竞品',
-    pattern: /(宝马|奥迪|奔驰|雷克萨斯).*?(垃圾|不行|差|烂|坑|骗)/,
+    pattern: /(其他|别家|他们).*?(垃圾|不行|差|烂|坑|骗)/,
     action: 'warn',
     category: 'warning',
     description: '避免贬低竞品',

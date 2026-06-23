@@ -15,12 +15,15 @@
 
 import { db } from '@/lib/db'
 
-// ─── 衰减配置 ───────────────────────────────────────
+// ─── 衰减配置（支持环境变量覆盖）──────────────────────
 const AGING_CONFIG = {
-  warningDays: 180,    // 180天：降权
-  reviewDays: 365,     // 365天：待审核
-  archiveDays: 730,    // 730天：归档
+  warningDays: Number(process.env.AGING_WARNING_DAYS) || 180,    // 180天：降权
+  reviewDays: Number(process.env.AGING_REVIEW_DAYS) || 365,      // 365天：待审核
+  archiveDays: Number(process.env.AGING_ARCHIVE_DAYS) || 730,    // 730天：归档
 }
+
+// ─── 并发控制（内存锁）────────────────────────────────
+let _agingRunning = false
 
 // ─── 衰减检查 ───────────────────────────────────────
 interface AgingReport {
@@ -35,72 +38,102 @@ interface AgingReport {
  * 执行知识衰减检查
  */
 export async function runAgingCheck(): Promise<AgingReport> {
-  const report: AgingReport = { total: 0, warned: 0, reviewed: 0, archived: 0, details: [] }
-  const now = Date.now()
+  // 并发锁：防止重复执行
+  if (_agingRunning) {
+    return { total: 0, warned: 0, reviewed: 0, archived: 0, details: [] }
+  }
+  _agingRunning = true
 
-  // 1. 检查知识文档 (KnowledgeDoc)
-  const kdocs = await db.knowledgeDoc.findMany({
-    where: { source: { not: 'official' } }, // 官方文档不过期
-  })
-  report.total += kdocs.length
+  try {
+    const report: AgingReport = { total: 0, warned: 0, reviewed: 0, archived: 0, details: [] }
+    const now = Date.now()
 
-  for (const doc of kdocs) {
-    const age = (now - doc.createdAt.getTime()) / (1000 * 60 * 60 * 24)
+    // 1. 检查知识文档 (KnowledgeDoc)
+    const kdocs = await db.knowledgeDoc.findMany({
+      where: { source: { not: 'official' } }, // 官方文档不过期
+    })
+    report.total += kdocs.length
 
-    if (age > AGING_CONFIG.archiveDays) {
-      // 超过 730 天 → 归档（设为不活跃）
-      await db.knowledgeDoc.update({
-        where: { id: doc.id },
-        data: { priority: 0 },
-      })
-      report.archived++
-      report.details.push({ id: doc.id, title: doc.title, age: Math.round(age), action: 'archived' })
+    // 收集批量更新操作
+    const kdocUpdates: Promise<unknown>[] = []
 
-    } else if (age > AGING_CONFIG.reviewDays) {
-      // 超过 365 天 → 降为最低优先级，标记待审核
-      await db.knowledgeDoc.update({
-        where: { id: doc.id },
-        data: { priority: 5 },
-      })
-      report.reviewed++
-      report.details.push({ id: doc.id, title: doc.title, age: Math.round(age), action: 'reviewed' })
+    for (const doc of kdocs) {
+      const age = (now - doc.createdAt.getTime()) / (1000 * 60 * 60 * 24)
 
-    } else if (age > AGING_CONFIG.warningDays) {
-      // 超过 180 天 → 降权 50%
-      const newPriority = Math.round(doc.priority * 0.5)
-      if (newPriority < doc.priority) {
-        await db.knowledgeDoc.update({
-          where: { id: doc.id },
-          data: { priority: newPriority },
-        })
-        report.warned++
-        report.details.push({ id: doc.id, title: doc.title, age: Math.round(age), action: 'warned' })
+      if (age > AGING_CONFIG.archiveDays) {
+        // 超过 730 天 → 归档（设为不活跃）
+        kdocUpdates.push(
+          db.knowledgeDoc.update({
+            where: { id: doc.id },
+            data: { priority: 0 },
+          })
+        )
+        report.archived++
+        report.details.push({ id: doc.id, title: doc.title, age: Math.round(age), action: 'archived' })
+
+      } else if (age > AGING_CONFIG.reviewDays) {
+        // 超过 365 天 → 降为最低优先级，标记待审核
+        kdocUpdates.push(
+          db.knowledgeDoc.update({
+            where: { id: doc.id },
+            data: { priority: 5 },
+          })
+        )
+        report.reviewed++
+        report.details.push({ id: doc.id, title: doc.title, age: Math.round(age), action: 'reviewed' })
+
+      } else if (age > AGING_CONFIG.warningDays) {
+        // 超过 180 天 → 降权 50%
+        const newPriority = Math.round(doc.priority * 0.5)
+        if (newPriority < doc.priority) {
+          kdocUpdates.push(
+            db.knowledgeDoc.update({
+              where: { id: doc.id },
+              data: { priority: newPriority },
+            })
+          )
+          report.warned++
+          report.details.push({ id: doc.id, title: doc.title, age: Math.round(age), action: 'warned' })
+        }
       }
     }
-  }
 
-  // 2. 检查真理文档 (TruthDocument) — 有 validUntil 的自动过期
-  const tdocs = await db.truthDocument.findMany({
-    where: {
-      validUntil: { not: null },
-      isActive: true,
-    },
-  })
-  report.total += tdocs.length
+    // 批量执行所有知识文档更新
+    await Promise.all(kdocUpdates)
 
-  for (const doc of tdocs) {
-    if (doc.validUntil && doc.validUntil.getTime() < now) {
-      await db.truthDocument.update({
-        where: { id: doc.id },
-        data: { isActive: false },
-      })
-      report.archived++
-      const age = (now - doc.createdAt.getTime()) / (1000 * 60 * 60 * 24)
-      report.details.push({ id: doc.id, title: doc.title, age: Math.round(age), action: 'expired' })
+    // 2. 检查真理文档 (TruthDocument) — 有 validUntil 的自动过期
+    const tdocs = await db.truthDocument.findMany({
+      where: {
+        validUntil: { not: null },
+        isActive: true,
+      },
+    })
+    report.total += tdocs.length
+
+    // 收集真理文档批量更新操作
+    const tdocUpdates: Promise<unknown>[] = []
+
+    for (const doc of tdocs) {
+      if (doc.validUntil && doc.validUntil.getTime() < now) {
+        tdocUpdates.push(
+          db.truthDocument.update({
+            where: { id: doc.id },
+            data: { isActive: false },
+          })
+        )
+        report.archived++
+        const age = (now - doc.createdAt.getTime()) / (1000 * 60 * 60 * 24)
+        report.details.push({ id: doc.id, title: doc.title, age: Math.round(age), action: 'expired' })
+      }
     }
-  }
 
-  return report
+    // 批量执行所有真理文档更新
+    await Promise.all(tdocUpdates)
+
+    return report
+  } finally {
+    _agingRunning = false
+  }
 }
 
 // ─── 单篇知识衰减计算 ───────────────────────────────
@@ -123,8 +156,9 @@ export function getEffectiveWeight(doc: {
     decayFactor = Math.exp(-0.001 * excessDays)
   }
 
-  // 过期检查
-  if (doc.expiresAt && doc.expiresAt.getTime() < now) {
+  // 过期检查（可选链防止 null/undefined 时报错）
+  const expiresTime = doc.expiresAt?.getTime()
+  if (expiresTime != null && expiresTime < now) {
     return 0
   }
 
@@ -148,13 +182,13 @@ export async function purgeStaleKnowledge(): Promise<number> {
     },
   })
 
-  let purged = 0
-  for (const doc of stale) {
-    await db.knowledgeDoc.delete({ where: { id: doc.id } })
-    purged++
-  }
+  // 批量删除
+  const deleteOps = stale.map(doc =>
+    db.knowledgeDoc.delete({ where: { id: doc.id } })
+  )
+  await Promise.all(deleteOps)
 
-  return purged
+  return stale.length
 }
 
 // ─── 获取待审核的过期知识 ────────────────────────────
@@ -192,12 +226,20 @@ export async function getReviewQueue(): Promise<{
  * 人工确认某条知识仍然有效 → 重置年龄
  */
 export async function refreshKnowledge(id: string): Promise<void> {
-  await db.knowledgeDoc.update({
-    where: { id },
-    data: {
-      priority: 50,
-      createdAt: new Date(), // 重置创建时间
-      updatedAt: new Date(),
-    },
-  })
+  try {
+    const result = await db.knowledgeDoc.update({
+      where: { id },
+      data: {
+        priority: 50,
+        createdAt: new Date(), // 重置创建时间
+        updatedAt: new Date(),
+      },
+    })
+    if (!result) {
+      throw new Error(`Failed to refresh knowledge: no record updated for id=${id}`)
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`refreshKnowledge failed for id=${id}: ${message}`)
+  }
 }

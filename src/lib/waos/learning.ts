@@ -22,6 +22,30 @@ import { db } from '@/lib/db'
 import { compressConversation } from './memory'
 import { analyzeActionEffectiveness, type ActionEffectiveness } from './decision-replay'
 
+// ─── 配置常量 ─────────────────────────────────────────
+const LEARNING_CONFIG = {
+  /** 相似度阈值，超过此值才归入同一聚类 */
+  SIMILARITY_THRESHOLD: 0.6,
+  /** 模板最低出现次数才建议入库 */
+  TEMPLATE_MIN_COUNT: 3,
+  /** 模板内容最小字符长度 */
+  TEMPLATE_MIN_LENGTH: 5,
+  /** 模板内容最大字符长度 */
+  TEMPLATE_MAX_LENGTH: 500,
+  /** 每轮最多建议条数 */
+  MAX_SUGGESTIONS: 10,
+  /** 低转化率阈值 */
+  LOW_CONVERSION_RATE: 0.1,
+  /** 高转化率阈值 */
+  HIGH_CONVERSION_RATE: 0.5,
+  /** 低转化判断最低使用次数 */
+  LOW_CONVERSION_MIN_USES: 5,
+  /** 高转化判断最低使用次数 */
+  HIGH_CONVERSION_MIN_USES: 3,
+  /** 学习模板写入知识库时的 priority */
+  KNOWLEDGE_PRIORITY: 30,
+} as const
+
 // ─── 类型 ────────────────────────────────────────────
 export interface LearningResult {
   newTemplates: TemplateSuggestion[]
@@ -66,25 +90,41 @@ export async function nightlyTraining(): Promise<LearningResult> {
     errors: [],
   }
 
-  try {
-    // 1. 模板挖掘：从昨日对话提取高频回复
-    const templates = await mineTemplates()
-    result.newTemplates = templates
+  // 子任务之间无依赖，并行执行
+  const [templatesResult, rulesResult, compressedResult, personaResult] =
+    await Promise.allSettled([
+      mineTemplates(),
+      optimizePlaybook(),
+      compressDailyMemories(),
+      suggestPersonaUpdates(),
+    ])
 
-    // 2. Playbook 优化：分析动作效果
-    const rules = await optimizePlaybook()
-    result.newRules = rules
+  if (templatesResult.status === 'fulfilled') {
+    result.newTemplates = templatesResult.value
+  } else {
+    console.error('[LearningEngine] mineTemplates failed:', templatesResult.reason)
+    result.errors.push(`mineTemplates: ${String(templatesResult.reason)}`)
+  }
 
-    // 3. 记忆压缩：提取长期记忆
-    const compressed = await compressDailyMemories()
-    result.memoryCompressions = compressed
+  if (rulesResult.status === 'fulfilled') {
+    result.newRules = rulesResult.value
+  } else {
+    console.error('[LearningEngine] optimizePlaybook failed:', rulesResult.reason)
+    result.errors.push(`optimizePlaybook: ${String(rulesResult.reason)}`)
+  }
 
-    // 4. 人格更新建议
-    const persona = await suggestPersonaUpdates()
-    result.personaUpdates = persona
+  if (compressedResult.status === 'fulfilled') {
+    result.memoryCompressions = compressedResult.value
+  } else {
+    console.error('[LearningEngine] compressDailyMemories failed:', compressedResult.reason)
+    result.errors.push(`compressDailyMemories: ${String(compressedResult.reason)}`)
+  }
 
-  } catch (e) {
-    result.errors.push(String(e))
+  if (personaResult.status === 'fulfilled') {
+    result.personaUpdates = personaResult.value
+  } else {
+    console.error('[LearningEngine] suggestPersonaUpdates failed:', personaResult.reason)
+    result.errors.push(`suggestPersonaUpdates: ${String(personaResult.reason)}`)
   }
 
   return result
@@ -113,7 +153,7 @@ async function mineTemplates(): Promise<TemplateSuggestion[]> {
     if (!groups.has(intent)) groups.set(intent, [])
 
     const existing = groups.get(intent)!.find(g =>
-      similarityScore(g.content, msg.content) > 0.6
+      similarityScore(g.content, msg.content) > LEARNING_CONFIG.SIMILARITY_THRESHOLD
     )
 
     if (existing) {
@@ -128,7 +168,7 @@ async function mineTemplates(): Promise<TemplateSuggestion[]> {
 
   for (const [intent, msgs] of groups) {
     for (const msg of msgs) {
-      if (msg.count >= 3 && msg.content.length > 5 && msg.content.length < 500) {
+      if (msg.count >= LEARNING_CONFIG.TEMPLATE_MIN_COUNT && msg.content.length > LEARNING_CONFIG.TEMPLATE_MIN_LENGTH && msg.content.length < LEARNING_CONFIG.TEMPLATE_MAX_LENGTH) {
         suggestions.push({
           content: msg.content,
           intent,
@@ -141,7 +181,7 @@ async function mineTemplates(): Promise<TemplateSuggestion[]> {
   }
 
   // 写入审核队列
-  for (const s of suggestions.slice(0, 10)) { // 限10条
+  for (const s of suggestions.slice(0, LEARNING_CONFIG.MAX_SUGGESTIONS)) {
     await db.learningReview.create({
       data: {
         type: 'template',
@@ -152,7 +192,7 @@ async function mineTemplates(): Promise<TemplateSuggestion[]> {
     })
   }
 
-  return suggestions.slice(0, 10)
+  return suggestions.slice(0, LEARNING_CONFIG.MAX_SUGGESTIONS)
 }
 
 // ─── Playbook 优化 ──────────────────────────────────
@@ -162,7 +202,7 @@ async function optimizePlaybook(): Promise<RuleSuggestion[]> {
 
   for (const eff of effectiveness) {
     // 转化率 < 10% 的动作 → 建议降权或替换
-    if (eff.totalUses >= 5 && eff.conversionRate < 0.1) {
+    if (eff.totalUses >= LEARNING_CONFIG.LOW_CONVERSION_MIN_USES && eff.conversionRate < LEARNING_CONFIG.LOW_CONVERSION_RATE) {
       suggestions.push({
         playbookKey: `${eff.intent}|${eff.stage}|${eff.action}`,
         currentRate: eff.conversionRate,
@@ -172,7 +212,7 @@ async function optimizePlaybook(): Promise<RuleSuggestion[]> {
     }
 
     // 转化率 > 50% 的动作 → 建议提升优先级
-    if (eff.totalUses >= 3 && eff.conversionRate > 0.5) {
+    if (eff.totalUses >= LEARNING_CONFIG.HIGH_CONVERSION_MIN_USES && eff.conversionRate > LEARNING_CONFIG.HIGH_CONVERSION_RATE) {
       suggestions.push({
         playbookKey: `${eff.intent}|${eff.stage}|${eff.action}`,
         currentRate: eff.conversionRate,
@@ -233,18 +273,32 @@ async function suggestPersonaUpdates(): Promise<PersonaSuggestion[]> {
   return []
 }
 
-// ─── 相似度工具 ─────────────────────────────────────
+// ─── 相似度工具（Jaccard Bigram）──────────────────────
 function similarityScore(a: string, b: string): number {
   if (a === b) return 1
   if (!a || !b) return 0
 
-  const aWords = new Set(a.split(''))
-  const bWords = new Set(b.split(''))
-  let overlap = 0
-  for (const w of Array.from(aWords)) {
-    if (bWords.has(w)) overlap++
+  const bigramsOf = (s: string): Set<string> => {
+    const set = new Set<string>()
+    for (let i = 0; i < s.length - 1; i++) {
+      set.add(s.slice(i, i + 2))
+    }
+    return set
   }
-  return overlap / Math.max(aWords.size, bWords.size)
+
+  const aBigrams = bigramsOf(a)
+  const bBigrams = bigramsOf(b)
+
+  if (aBigrams.size === 0 && bBigrams.size === 0) return 1
+  if (aBigrams.size === 0 || bBigrams.size === 0) return 0
+
+  let intersection = 0
+  for (const bg of aBigrams) {
+    if (bBigrams.has(bg)) intersection++
+  }
+
+  const union = aBigrams.size + bBigrams.size - intersection
+  return intersection / union
 }
 
 // ─── 审核批准 ───────────────────────────────────────
@@ -254,28 +308,39 @@ export async function approveLearning(id: string): Promise<void> {
 
   if (review.type === 'template') {
     const suggestion = JSON.parse(review.suggestion) as TemplateSuggestion
-    await db.knowledgeDoc.create({
-      data: {
-        title: '[学习] ' + suggestion.intent,
-        content: suggestion.content,
-        category: suggestion.intent,
-        keywords: suggestion.intent,
-        source: 'learning',
-        priority: 30,
-        effectScore: suggestion.effectEstimate,
-      },
+    await db.$transaction([
+      db.knowledgeDoc.create({
+        data: {
+          title: '[学习] ' + suggestion.intent,
+          content: suggestion.content,
+          category: suggestion.intent,
+          keywords: suggestion.intent,
+          source: 'learning',
+          priority: LEARNING_CONFIG.KNOWLEDGE_PRIORITY,
+          effectScore: suggestion.effectEstimate,
+        },
+      }),
+      db.learningReview.update({
+        where: { id },
+        data: { status: 'approved', reviewedAt: new Date() },
+      }),
+    ])
+  } else {
+    await db.learningReview.update({
+      where: { id },
+      data: { status: 'approved', reviewedAt: new Date() },
     })
   }
-
-  await db.learningReview.update({
-    where: { id },
-    data: { status: 'approved', reviewedAt: new Date() },
-  })
 }
 
 export async function rejectLearning(id: string): Promise<void> {
-  await db.learningReview.update({
-    where: { id },
-    data: { status: 'rejected', reviewedAt: new Date() },
-  })
+  try {
+    await db.learningReview.update({
+      where: { id },
+      data: { status: 'rejected', reviewedAt: new Date() },
+    })
+  } catch (e) {
+    console.error('[LearningEngine] rejectLearning failed:', e)
+    throw e
+  }
 }

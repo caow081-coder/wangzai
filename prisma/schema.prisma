@@ -213,12 +213,141 @@ model KnowledgeDoc {
   tags        String   @default("[]")  // JSON 数组
   keywords    String   @default("")   // 空格分隔的关键词（用于全文检索）
   vector      String?  // JSON 向量（简化版：TF-IDF 或 hash，生产用 embeddings）
-  source      String   @default("manual") // manual | imported | official
+  source      String   @default("manual") // manual | imported | official | learning
   priority    Int      @default(50)  // 优先级 0-100，高优先级匹配先返回
   hitCount    Int      @default(0)   // 被检索命中次数
+  effectScore Float    @default(0)   // 效果评分（用于学习引擎排序）
+  expiresAt   DateTime?  // 过期时间（知识衰减）
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([category])
   @@index([priority])
+}
+
+// ─── WAOS 真理层：Truth Engine ─────────────────
+model TruthDocument {
+  id          String   @id @default(cuid())
+  title       String
+  content     String
+  category    String   @default("policy")
+  priority    Int      @default(0)
+  validFrom   DateTime @default(now())
+  validUntil  DateTime?
+  isActive    Boolean  @default(true)
+  tags        String   @default("[]")
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([priority])
+  @@index([category])
+}
+
+// ─── WAOS 长期记忆：Memory Engine ─────────────────
+model MemoryLong {
+  id            String   @id @default(cuid())
+  customerId    String
+  fact          String
+  category      String   @default("general")
+  importance    Float    @default(50)
+  decayFactor   Float    @default(0.01)
+  confidence    Float    @default(1.0)
+  version       Int      @default(1)
+  sourceEvents  String   @default("[]")
+  lastAccessed  DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([customerId, importance])
+}
+
+// ─── WAOS 关系图谱：Relationship Graph ─────────────────
+model RelationNode {
+  id          String   @id @default(cuid())
+  customerId  String?
+  name        String
+  type        String   // customer | family | event | product | school
+  importance  Float    @default(50)
+  properties  String   @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  outEdges    RelationEdge[] @relation("fromNode")
+  inEdges     RelationEdge[] @relation("toNode")
+
+  @@index([customerId])
+  @@index([type])
+}
+
+model RelationEdge {
+  id          String   @id @default(cuid())
+  fromId      String
+  toId        String
+  type        String
+  weight      Float    @default(1.0)
+  properties  String   @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fromNode    RelationNode @relation("fromNode", fields: [fromId], references: [id], onDelete: Cascade)
+  toNode      RelationNode @relation("toNode", fields: [toId], references: [id], onDelete: Cascade)
+
+  @@index([fromId])
+  @@index([toId])
+}
+
+// ─── WAOS 伦理规则：Ethics Layer ─────────────────
+model EthicsRule {
+  id          String   @id @default(cuid())
+  name        String
+  description String
+  category    String
+  pattern     String
+  action      String   // block | warn | flag_for_review
+  isActive    Boolean  @default(true)
+  priority    Int      @default(50)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@index([isActive])
+}
+
+// ─── WAOS 决策日志：Decision Replay Engine ─────────────────
+model DecisionLog {
+  id            String   @id @default(cuid())
+  customerId    String
+  eventId       String?
+  intent        String?
+  stage         String?
+  personaMix    String?
+  action        String
+  templateId    String?
+  replyContent  String?
+  result        String?
+  confidence    Float    @default(0)
+  latency       Int      @default(0)
+  tokensUsed    Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([result])
+}
+
+// ─── WAOS 学习审核队列：Learning Review ─────────────────
+model LearningReview {
+  id          String   @id @default(cuid())
+  type        String
+  suggestion  String
+  source      String   @default("learning_engine")
+  status      String   @default("pending")
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([type])
 }

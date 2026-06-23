@@ -53,7 +53,6 @@ const CATEGORY_WEIGHTS: Record<string, number> = {
  * 返回 { passed: false } 时，Decision Engine 必须拦截该动作。
  */
 export async function verifyClaim(claim: string): Promise<TruthVerification> {
-  export async function verifyClaim(claim: string): Promise<TruthVerification> {
   try {
     const now = new Date()
 

@@ -321,7 +321,7 @@ function ChatWindow() {
   const persona = personas.find(p => p.id === activePersonaId) || personas[0]
   const { isDesktop, sendToPlatform } = useElectronBridge()
   // 桌面端默认启用真实嵌入（初始值直接计算，避免 effect 内 setState）
-  const [embedMode, setEmbedMode] = useState(() => isDesktop)
+  const [embedMode, setEmbedMode] = useState(false) // 关闭 wx.qq.com 嵌入，改用 ClawBot SDK
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 

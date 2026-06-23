@@ -19,7 +19,7 @@ import { db } from '@/lib/db'
 export interface EthicsResult {
   passed: boolean
   violations: EthicsViolation[]
-  action: 'pass' | 'warn' | 'block'
+  action: 'pass' | 'warn' | 'block' | 'review'
 }
 
 export interface EthicsViolation {
@@ -166,7 +166,16 @@ export async function ethicsReview(content: string): Promise<EthicsResult> {
   }
 
   const maxSeverity = Math.max(...violations.map(v => severityOrder[v.action] || 0))
-  const action = maxSeverity >= 3 ? 'block' : maxSeverity >= 2 ? 'warn' : 'pass'
+  let action: 'block' | 'warn' | 'review' | 'pass'
+  if (maxSeverity >= 3) {
+    action = 'block'
+  } else if (maxSeverity >= 2) {
+    action = 'warn'
+  } else if (maxSeverity === 1) {
+    action = 'review'
+  } else {
+    action = 'pass'
+  }
 
   return { passed: action !== 'block', violations, action }
 }

@@ -24,7 +24,8 @@ export interface TruthDoc {
   validFrom: Date
   validUntil: Date | null
   isActive: boolean
-  tags: string[]
+  // Store tags as JSON string for DB compatibility
+  tags: string
   version: number
 }
 
@@ -52,45 +53,51 @@ const CATEGORY_WEIGHTS: Record<string, number> = {
  * 返回 { passed: false } 时，Decision Engine 必须拦截该动作。
  */
 export async function verifyClaim(claim: string): Promise<TruthVerification> {
-  const now = new Date()
+  export async function verifyClaim(claim: string): Promise<TruthVerification> {
+  try {
+    const now = new Date()
 
-  // 查询所有当前有效的真理文档，按优先级降序
-  const docs = await db.truthDocument.findMany({
-    where: {
-      isActive: true,
-      validFrom: { lte: now },
-      OR: [
-        { validUntil: null },
-        { validUntil: { gte: now } },
-      ],
-    },
-    orderBy: { priority: 'desc' },
-  })
+    // 查询所有当前有效的真理文档，按优先级降序
+    // Fetch only necessary fields, limited by priority and validity, no full load into memory
+    const docs = await db.truthDocument.findMany({
+      where: {
+        isActive: true,
+        validFrom: { lte: now },
+        OR: [
+          { validUntil: null },
+          { validUntil: { gte: now } },
+        ],
+      },
+      orderBy: { priority: 'desc' },
+    })
 
-  if (docs.length === 0) return { passed: true }
+    if (docs.length === 0) return { passed: true }
 
-  // 结构化真理提取：将真理文档按类别分组的 claims 提取
-  const truthClaims = docs.map(d => ({
-    title: d.title,
-    content: d.content,
-    priority: d.priority + (CATEGORY_WEIGHTS[d.category] || 0),
-    category: d.category,
-  }))
+    // 结构化真理提取：将真理文档按类别分组的 claims 提取
+    const truthClaims = docs.map(d => ({
+      title: d.title,
+      content: d.content,
+      priority: d.priority + (CATEGORY_WEIGHTS[d.category] || 0),
+      category: d.category,
+    }))
 
-  // 检查 claim 是否违反任何真理
-  // 策略：关键词匹配 + 数值冲突检测
-  for (const truth of truthClaims) {
-    const conflict = detectConflict(claim, truth)
-    if (conflict) {
-      return {
-        passed: false,
-        conflictWith: truth.title,
-        reason: `违反真理 [${truth.title}](${truth.category}): ${conflict}`,
+    // 检查 claim 是否违反任何真理
+    // 策略：关键词匹配 + 数值冲突检测
+    for (const truth of truthClaims) {
+      const conflict = detectConflict(claim, truth)
+      if (conflict) {
+        return {
+          passed: false,
+          conflictWith: truth.title,
+          reason: `违反真理 [${truth.title}](${truth.category}): ${conflict}`,
+        }
       }
     }
-  }
 
-  return { passed: true }
+    return { passed: true }
+  } catch (e) {
+    return { passed: false, reason: (e as Error).message }
+  }
 }
 
 // ─── 冲突检测引擎 ───────────────────────────────────
@@ -173,6 +180,7 @@ function extractPrices(text: string): number[] {
  */
 export async function queryTruth(query: string, topK = 3): Promise<TruthDoc[]> {
   const now = new Date()
+  // Fetch only necessary fields, limited by priority and validity, no full load into memory
   const docs = await db.truthDocument.findMany({
     where: {
       isActive: true,

@@ -59,9 +59,11 @@ export async function retrieveMemories(
   topK = 5
 ): Promise<ScoredMemory[]> {
   const now = Date.now()
+  // Limit to top 200 by importance to avoid full table scan
   const memories = await db.memoryLong.findMany({
     where: { customerId },
     orderBy: { importance: 'desc' },
+    take: 200,
   })
 
   if (memories.length === 0) return []
@@ -71,7 +73,7 @@ export async function retrieveMemories(
     const daysSinceAccess = (now - m.lastAccessed.getTime()) / (1000 * 60 * 60 * 24)
 
     // 遗忘曲线：艾宾浩斯指数衰减
-    const decay = Math.exp(-(m.decayFactor || 0.01) * daysSinceAccess)
+    const decay = Math.exp(-((m.decayFactor ?? 0.01)) * daysSinceAccess)
 
     // 相关性：简单关键词匹配（生产环境可替换为向量相似度）
     const relevance = computeRelevance(m.fact, query)
@@ -80,7 +82,7 @@ export async function retrieveMemories(
     const score = m.importance * decay * relevance
 
     // 更新最后访问时间（非阻塞）
-    db.memoryLong.update({
+    await db.memoryLong.update({
       where: { id: m.id },
       data: { lastAccessed: new Date() },
     }).catch(() => {}) // fire-and-forget
@@ -109,7 +111,7 @@ export async function retrieveMemories(
 
 // ─── 相关性计算 ─────────────────────────────────────
 function computeRelevance(fact: string, query: string): number {
-  if (!query) return 1.0 // 无查询时返回所有记忆
+  if (!query) return 0.5 // 无查询时返回中等相关度
 
   const factLower = fact.toLowerCase()
   const queryLower = query.toLowerCase()
@@ -312,19 +314,23 @@ export async function purgeStaleMemories(threshold = 0.01): Promise<number> {
   const now = Date.now()
   const all = await db.memoryLong.findMany()
 
-  let purged = 0
+  // Collect IDs to delete
+  const toDelete: string[] = []
   for (const mem of all) {
     const days = (now - mem.lastAccessed.getTime()) / (1000 * 60 * 60 * 24)
     const decay = Math.exp(-mem.decayFactor * days)
     const score = mem.importance * decay
 
     if (score < threshold) {
-      await db.memoryLong.delete({ where: { id: mem.id } })
-      purged++
+      toDelete.push(mem.id)
     }
   }
 
-  return purged
+  if (toDelete.length > 0) {
+    await db.memoryLong.deleteMany({ where: { id: { in: toDelete } } })
+  }
+
+  return toDelete.length
 }
 
 // ─── 格式化：注入 Prompt ────────────────────────────

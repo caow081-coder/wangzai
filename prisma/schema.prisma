@@ -226,9 +226,10 @@ model KnowledgeDoc {
 }
 
 // ─── WAOS 真理层：Truth Engine ─────────────────
+// 核心原则：真理文档 > 聊天记录。优先级+时间门控+否决权
 model TruthDocument {
   id          String   @id @default(cuid())
-  title       String
+  title       String   @unique
   content     String
   category    String   @default("policy")
   priority    Int      @default(0)
@@ -242,6 +243,7 @@ model TruthDocument {
 
   @@index([priority])
   @@index([category])
+  @@index([isActive, priority])
 }
 
 // ─── WAOS 长期记忆：Memory Engine ─────────────────
@@ -334,9 +336,21 @@ model DecisionLog {
 
   @@index([customerId, createdAt])
   @@index([result])
+  @@index([action])
 }
 
-// ─── WAOS 学习审核队列：Learning Review ─────────────────
+// ─── WAOS 人格锚点持久化：Persona Anchor ─────────────────
+model PersonaAnchor {
+  id            String   @id @default(cuid())
+  profileId     String   @unique
+  basePersona   String   // JSON: PersonaBlend
+  learnedTraits String   // JSON: LearnedTraits  
+  anchorWeight  Float    @default(0.7)
+  driftScore    Float    @default(0)
+  lastCalibrated DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
 model LearningReview {
   id          String   @id @default(cuid())
   type        String

@@ -116,25 +116,54 @@ export async function POST(req: NextRequest) {
   let memoryContext = ''
   let personaContext = ''
   let relationContext = ''
-  try {
-    const truthDocs = await queryTruth(userMessage, 2)
-    if (truthDocs.length > 0) {
-      truthContext = '\n\n【以下为官方真理信息，回复中涉及事实数据必须以此为准】\n' +
-        truthDocs.map((d: any) => `[${d.title}] ${d.content}`).join('\n')
-    }
-  } catch { /* non-critical */ }
-  try {
-    const cid = customerId || leadId
-    const memories = await retrieveMemories(cid, userMessage, 3)
-    memoryContext = formatMemoriesForPrompt(memories)
-  } catch { /* non-critical */ }
-  try {
-    personaContext = generatePersonaConstraint('default')
-  } catch { /* non-critical */ }
-  try {
-    const cid = customerId || leadId
-    relationContext = buildRelationContext(cid)
-  } catch { /* non-critical */ }
+  // Parallel engine calls
+  const enginePromises = [
+    // Truth query
+    (async () => {
+      try {
+        const truthDocs = await queryTruth(userMessage, 2)
+        if (truthDocs.length > 0) {
+          truthContext = '\n\n【以下为官方真理信息，回复中涉及事实数据必须以此为准】\n' +
+            truthDocs.map((d: any) => `[${d.title}] ${d.content}`).join('\n')
+        }
+      } catch (e) {
+        console.error('[WAOS /api/waos/reply] truth query error:', e)
+        // non-critical
+      }
+    })(),
+    // Memory retrieval
+    (async () => {
+      try {
+        const cid = customerId || leadId
+        const memories = await retrieveMemories(cid, userMessage, 3)
+        memoryContext = formatMemoriesForPrompt(memories)
+      } catch (e) {
+        console.error('[WAOS /api/waos/reply] memory retrieval error:', e)
+        // non-critical
+      }
+    })(),
+    // Persona constraint generation
+    (async () => {
+      try {
+        personaContext = generatePersonaConstraint(personaName ?? 'default')
+      } catch (e) {
+        console.error('[WAOS /api/waos/reply] persona constraint error:', e)
+        // non-critical
+      }
+    })(),
+    // Relation context building
+    (async () => {
+      try {
+        const cid = customerId || leadId
+        relationContext = buildRelationContext(cid)
+      } catch (e) {
+        console.error('[WAOS /api/waos/reply] relation context error:', e)
+        // non-critical
+      }
+    })(),
+  ]
+  await Promise.allSettled(enginePromises)
+
 
   // 4. Build messages with all engine contexts
   const personaIntro = personaName
@@ -185,7 +214,7 @@ export async function POST(req: NextRequest) {
             source: 'ethics_block',
           })
         }
-      } catch { /* non-critical */ }
+      } catch (e) { console.error('[WAOS /api/waos/reply] non-critical error:', e); /* non-critical */ }
 
       // 6. Output filter
       const filtered = safetyFilter(raw)
@@ -207,7 +236,7 @@ export async function POST(req: NextRequest) {
           latency: Date.now() - startedAt,
           tokensUsed: Math.ceil((systemContent + userMessage + filtered.safe).length / 4),
         })
-      } catch { /* non-critical */ }
+      } catch (e) { console.error('[WAOS /api/waos/reply] non-critical error:', e); /* non-critical */ }
 
       return NextResponse.json({
         leadId,

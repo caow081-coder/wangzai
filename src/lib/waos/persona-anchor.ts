@@ -13,6 +13,8 @@
  */
 
 import { compilePersona, type IdentityVector, type PersonaBlend } from '@/lib/identity/kernel'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { join } from 'path'
 
 // ─── 类型 ────────────────────────────────────────────
 export interface PersonaAnchor {
@@ -55,8 +57,41 @@ const DEFAULT_TRAITS: LearnedTraits = {
   responseSpeedBias: 0,
 }
 
-// ─── 内存存储（生产应持久化到 DB）─────────────────────
+// ─── 持久化存储（JSON 文件，重启不丢）─────────────
+const ANCHOR_FILE = join(process.cwd(), 'db', 'persona-anchors.json')
 const anchors = new Map<string, PersonaAnchor>()
+
+// 启动时从磁盘恢复
+function loadAnchors(): void {
+  try {
+    if (existsSync(ANCHOR_FILE)) {
+      const raw = readFileSync(ANCHOR_FILE, 'utf-8')
+      const data = JSON.parse(raw)
+      for (const [k, v] of Object.entries(data)) {
+        const a = v as any
+        a.lastCalibrated = new Date(a.lastCalibrated)
+        anchors.set(k, a as PersonaAnchor)
+      }
+      console.log(`[PersonaAnchor] 已从磁盘恢复 ${anchors.size} 个锚点`)
+    }
+  } catch (e) {
+    console.error('[PersonaAnchor] 恢复失败，从零开始:', e)
+  }
+}
+
+function saveAnchors(): void {
+  try {
+    const obj: Record<string, any> = {}
+    for (const [k, v] of anchors) obj[k] = v
+    mkdirSync(join(process.cwd(), 'db'), { recursive: true })
+    writeFileSync(ANCHOR_FILE, JSON.stringify(obj, null, 2), 'utf-8')
+  } catch (e) {
+    console.error('[PersonaAnchor] 持久化失败:', e)
+  }
+}
+
+// 模块加载时恢复
+loadAnchors()
 
 // ─── 初始化锚点 ─────────────────────────────────────
 /**
@@ -68,16 +103,18 @@ export function initAnchor(
   personas: any[],
   config?: Partial<AnchorConfig>
 ): PersonaAnchor {
+  const w = Math.max(0, Math.min(1, config?.anchorWeight ?? 0.70)) // 审计: 强制 [0,1] 范围
   const basePersona = compilePersona(identity, personas)
   const anchor: PersonaAnchor = {
     profileId,
     basePersona: JSON.parse(JSON.stringify(basePersona)), // 深拷贝
     learnedTraits: { ...DEFAULT_TRAITS },
-    anchorWeight: config?.anchorWeight ?? 0.70,
+    anchorWeight: w,
     lastCalibrated: new Date(),
     driftScore: 0,
   }
   anchors.set(profileId, anchor)
+  saveAnchors()
   return anchor
 }
 
@@ -141,6 +178,7 @@ export function updateTraits(
   // 计算漂移分数
   anchor.driftScore = computeDriftScore(anchor)
   anchor.lastCalibrated = new Date()
+  saveAnchors()
 }
 
 // ─── 漂移检测 ───────────────────────────────────────
@@ -215,6 +253,7 @@ export function resetTraits(profileId: string): void {
     anchor.learnedTraits = { ...DEFAULT_TRAITS }
     anchor.driftScore = 0
     anchor.lastCalibrated = new Date()
+    saveAnchors() // 审计: 重置后持久化
   }
 }
 

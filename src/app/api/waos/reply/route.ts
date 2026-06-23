@@ -33,6 +33,34 @@ import { logDecision } from '@/lib/waos/decision-replay'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+// DeepSeek API config
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || ''
+const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1'
+
+/** Direct DeepSeek API call (OpenAI compatible) */
+async function callDeepSeek(messages: { role: string; content: string }[]): Promise<string> {
+  const res = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      messages,
+      temperature: 0.7,
+      max_tokens: 1024,
+    }),
+    signal: AbortSignal.timeout(15000),
+  })
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '')
+    throw new Error(`DeepSeek HTTP ${res.status}: ${errText.slice(0, 200)}`)
+  }
+  const data = await res.json()
+  return data.choices?.[0]?.message?.content?.trim() || ''
+}
+
 interface HistoryMsg {
   role: 'user' | 'assistant' | 'system' | 'human'
   content: string
@@ -185,16 +213,33 @@ export async function POST(req: NextRequest) {
   }
   messages.push({ role: 'user', content: userMessage })
 
-  // 4. LLM call with retry (max 2 attempts)
+  // 5. LLM call — DeepSeek primary, ZAI fallback
   let lastError: unknown = null
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const zai = await getZAI()
-      const completion = await zai.chat.completions.create({
-        messages,
-        thinking: { type: 'disabled' },
-      })
-      const raw = completion.choices?.[0]?.message?.content?.trim()
+      let raw: string
+      // Try DeepSeek first if key is configured
+      if (DEEPSEEK_API_KEY) {
+        try {
+          raw = await callDeepSeek(messages)
+        } catch (dsErr) {
+          console.error('[WAOS] DeepSeek failed, trying ZAI fallback:', dsErr)
+          // Fallback to ZAI
+          const zai = await getZAI()
+          const completion = await zai.chat.completions.create({
+            messages,
+            thinking: { type: 'disabled' },
+          })
+          raw = completion.choices?.[0]?.message?.content?.trim() || ''
+        }
+      } else {
+        const zai = await getZAI()
+        const completion = await zai.chat.completions.create({
+          messages,
+          thinking: { type: 'disabled' },
+        })
+        raw = completion.choices?.[0]?.message?.content?.trim() || ''
+      }
       if (!raw) throw new Error('Empty LLM response')
 
       // 5b. Ethics review（伦理层审查 AI 输出）─────────────────

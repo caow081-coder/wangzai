@@ -226,14 +226,35 @@ async function startNextServer() {
   } else {
     // 生产模式: 用 standalone server（不依赖 bun，纯 node 运行）
     const standalonePath = path.join(projectRoot, '.next', 'standalone')
-    const standaloneServer = path.join(standalonePath, 'server.js')
+    // Next.js standalone 可能输出到 <projectName> 子目录，自动探测
+    let standaloneServer = path.join(standalonePath, 'server.js')
+    let serverCwd = standalonePath
+    if (!fs.existsSync(standaloneServer)) {
+      // 查找子目录中的 server.js
+      try {
+        const entries = fs.readdirSync(standalonePath, { withFileTypes: true })
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            const candidate = path.join(standalonePath, entry.name, 'server.js')
+            if (fs.existsSync(candidate)) {
+              standaloneServer = candidate
+              serverCwd = path.join(standalonePath, entry.name)
+              console.log(`[WAOS-Desktop] Found server.js in subdir: ${entry.name}`)
+              break
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[WAOS-Desktop] Error scanning standalone dir:', e.message)
+      }
+    }
     console.log(`[WAOS-Desktop] Standalone path: ${standalonePath}`)
     console.log(`[WAOS-Desktop] server.js exists: ${fs.existsSync(standaloneServer)}`)
 
     if (fs.existsSync(standaloneServer)) {
       // ✅ 正常路径：node server.js（Windows/Mac/Linux 都有 node）
       nextProcess = spawn(process.execPath, ['server.js'], {
-        cwd: standalonePath,
+        cwd: serverCwd,
         env: {
           ...process.env,
           NODE_ENV: 'production',

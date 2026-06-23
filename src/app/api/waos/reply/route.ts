@@ -1,15 +1,19 @@
 /**
- * WAOS AI Reply Studio — backend
+ * WAOS AI Reply Studio — backend (v4.0 — 10层引擎集成)
  *
  * POST /api/waos/reply
- *   { leadId, userMessage, personaName, personaColor, history }
+ *   { leadId, userMessage, personaName, personaColor, history, customerId }
  *
- * Implements the audit's LLM safety pipeline:
- *  1. Input sanitization (Prompt injection defense)
- *  2. Context assembly (last 10 turns + persona system prompt)
- *  3. LLM call via z-ai-web-dev-sdk (server-only)
- *  4. Output filter (SafetyShield — banned keywords, price promises)
- *  5. Circuit-breaker style fallback: returns fallback message on any error
+ * 增强管道 (vs v3.0):
+ *   1. Input sanitization (安全护盾)
+ *   2. Circuit breaker check (熔断器)
+ *   3. Truth + Memory injection (真理层 + 记忆引擎注入)
+ *   4. Context assembly (persona + truth + memories + history)
+ *   5. LLM call via z-ai-web-dev-sdk
+ *   6. Ethics review (伦理层审查 AI 输出)
+ *   7. Decision log (决策日志回放)
+ *   8. Output filter (安全护盾)
+ *   9. Fallback
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -19,6 +23,9 @@ import {
   filterOutput as safetyFilter,
   SYSTEM_CONSTRAINTS,
 } from '@/lib/safety'
+import { ethicsReview } from '@/lib/waos/ethics'
+import { queryTruth, verifyClaim } from '@/lib/waos/truth'
+import { retrieveMemories, formatMemoriesForPrompt } from '@/lib/waos/memory'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -30,6 +37,7 @@ interface HistoryMsg {
 
 interface ReplyRequest {
   leadId: string
+  customerId?: string  // 用于记忆检索
   userMessage: string
   personaName?: string
   personaColor?: string
@@ -65,7 +73,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
-  const { leadId, userMessage, personaName, history = [] } = body || {}
+  const { leadId, userMessage, personaName, customerId, history = [] } = body || {}
 
   if (!leadId || !userMessage || typeof userMessage !== 'string') {
     return NextResponse.json({ error: 'leadId and userMessage required' }, { status: 400 })
@@ -100,12 +108,28 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // 3. Build messages with persona prefix + safety constraints
+  // 3. Truth + Memory injection（真理层 + 记忆引擎）─────────
+  let truthContext = ''
+  let memoryContext = ''
+  try {
+    const truthDocs = await queryTruth(userMessage, 2)
+    if (truthDocs.length > 0) {
+      truthContext = '\n\n【以下为官方真理信息，回复中涉及事实数据必须以此为准】\n' +
+        truthDocs.map((d: any) => `[${d.title}] ${d.content}`).join('\n')
+    }
+  } catch { /* non-critical */ }
+  try {
+    const cid = customerId || leadId
+    const memories = await retrieveMemories(cid, userMessage, 3)
+    memoryContext = formatMemoriesForPrompt(memories)
+  } catch { /* non-critical */ }
+
+  // 4. Build messages with persona + truth + memories + safety constraints
   const personaIntro = personaName
     ? `\n\n你当前的人设是：${personaName}。请严格按照这个人设的语气和风格回复。`
     : ''
 
-  const systemContent = SYSTEM_CONSTRAINTS + personaIntro
+  const systemContent = SYSTEM_CONSTRAINTS + personaIntro + truthContext + memoryContext
 
   const messages: { role: 'assistant' | 'user'; content: string }[] = [
     { role: 'assistant', content: systemContent },
@@ -132,7 +156,26 @@ export async function POST(req: NextRequest) {
       const raw = completion.choices?.[0]?.message?.content?.trim()
       if (!raw) throw new Error('Empty LLM response')
 
-      // 5. Output filter
+      // 5b. Ethics review（伦理层审查 AI 输出）─────────────────
+      let ethicsResult: any = { passed: true }
+      try {
+        ethicsResult = await ethicsReview(raw)
+        if (!ethicsResult.passed) {
+          // 伦理层拦截 — 返回安全兜底
+          recordSuccess()
+          return NextResponse.json({
+            leadId,
+            reply: '抱歉，我无法提供这类信息。请问还有其他关于产品本身的问题吗？',
+            safetyFiltered: true,
+            safetyReason: ethicsResult.violations?.map((v: any) => v.reason).join('; '),
+            tokensUsed: Math.ceil((systemContent + userMessage).length / 4),
+            latency: Date.now() - startedAt,
+            source: 'ethics_block',
+          })
+        }
+      } catch { /* non-critical */ }
+
+      // 6. Output filter
       const filtered = safetyFilter(raw)
       recordSuccess()
 
@@ -191,8 +234,11 @@ export async function GET(req: NextRequest) {
     pipeline: [
       'input_sanitization',
       'circuit_breaker_check',
+      'truth_injection',
+      'memory_injection',
       'context_assembly',
       'llm_call',
+      'ethics_review',
       'output_filter',
       'fallback',
     ],

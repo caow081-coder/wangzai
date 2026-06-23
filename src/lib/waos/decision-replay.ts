@@ -78,45 +78,45 @@ export async function logDecision(record: DecisionRecord): Promise<void> {
 }
 
 // ─── 常量 ───────────────────────────────────────
-+const DAY_MS = 1000 * 60 * 60 * 24
-+
-+// ─── 分析成交路径 ───────────────────────────────────
-+/**
-+ * 回溯一个客户的完整决策链：从第一次接触到最后结果
-+ */
-+export async function analyzeConversionPath(customerId: string): Promise<ConversionPath | null> {
-+  const logs = await db.decisionLog.findMany({
-+    where: { customerId },
-+    orderBy: { createdAt: 'asc' },
-+  })
-+
-+  if (logs.length === 0) return null
-+
-+  const firstDate = logs[0].createdAt
-+  const lastDate = logs[logs.length - 1].createdAt
-+  // totalDays should represent the span inclusive; using floor keeps consistency with day calculation
-+  const totalDays = Math.floor((lastDate.getTime() - firstDate.getTime()) / DAY_MS)
-+
-+  // 判断最终结果
-+  const lastLog = logs[logs.length - 1]
-+  let result: 'won' | 'lost' | 'ongoing' = 'ongoing'
-+  if (lastLog.result === 'converted' || lastLog.result === 'won') result = 'won'
-+  else if (lastLog.result === 'lost' || lastLog.result === 'rejected') result = 'lost'
-+
-+  const steps: ConversionStep[] = logs.map((log, i) => ({
-+    // Use floor to avoid day skipping issues
-+    day: i === 0 ? 0 : Math.floor((log.createdAt.getTime() - firstDate.getTime()) / DAY_MS),
-+    intent: log.intent,
-+    stage: log.stage,
-+    action: log.action,
-+    templateId: log.templateId,
-+    replyContent: log.replyContent,
-+    result: log.result,
-+    timestamp: log.createdAt,
-+  }))
-+
-+  return { customerId, steps, totalDays, result }
-+}
+const DAY_MS = 1000 * 60 * 60 * 24
+
+// ─── 分析成交路径 ───────────────────────────────────
+/**
+ * 回溯一个客户的完整决策链：从第一次接触到最后结果
+ */
+export async function analyzeConversionPath(customerId: string): Promise<ConversionPath | null> {
+  const logs = await db.decisionLog.findMany({
+    where: { customerId },
+    orderBy: { createdAt: 'asc' },
+  })
+
+  if (logs.length === 0) return null
+
+  const firstDate = logs[0].createdAt
+  const lastDate = logs[logs.length - 1].createdAt
+  // totalDays should represent the span inclusive; using floor keeps consistency with day calculation
+  const totalDays = Math.floor((lastDate.getTime() - firstDate.getTime()) / DAY_MS)
+
+  // 判断最终结果
+  const lastLog = logs[logs.length - 1]
+  let result: 'won' | 'lost' | 'ongoing' = 'ongoing'
+  if (lastLog.result === 'converted' || lastLog.result === 'won') result = 'won'
+  else if (lastLog.result === 'lost' || lastLog.result === 'rejected') result = 'lost'
+
+  const steps: ConversionStep[] = logs.map((log, i) => ({
+    // Use floor to avoid day skipping issues
+    day: i === 0 ? 0 : Math.floor((log.createdAt.getTime() - firstDate.getTime()) / DAY_MS),
+    intent: log.intent,
+    stage: log.stage,
+    action: log.action,
+    templateId: log.templateId,
+    replyContent: log.replyContent,
+    result: log.result,
+    timestamp: log.createdAt,
+  }))
+
+  return { customerId, steps, totalDays, result }
+}
 
 
 // ─── 生成成交剧本 ───────────────────────────────────
@@ -148,29 +148,29 @@ export async function generatePlaybook(): Promise<ConversionPath[]> {
 
   const paths: ConversionPath[] = []
   for (const cid of Array.from(uniqueIds).slice(0, 50)) {
-+    // 使用已经分组好的日志，避免 N+1 查询
-+    const logs = logsByCustomer[cid] || []
-+    if (logs.length === 0) continue
-+    // 复用内部逻辑但不再次查询数据库
-+    const firstDate = logs[0].createdAt
-+    const lastDate = logs[logs.length - 1].createdAt
-+    const totalDays = Math.floor((lastDate.getTime() - firstDate.getTime()) / DAY_MS)
-+    const lastLog = logs[logs.length - 1]
-+    let result: 'won' | 'lost' | 'ongoing' = 'ongoing'
-+    if (lastLog.result === 'converted' || lastLog.result === 'won') result = 'won'
-+    else if (lastLog.result === 'lost' || lastLog.result === 'rejected') result = 'lost'
-+    const steps: ConversionStep[] = logs.map((log, i) => ({
-+      day: i === 0 ? 0 : Math.floor((log.createdAt.getTime() - firstDate.getTime()) / DAY_MS),
-+      intent: log.intent,
-+      stage: log.stage,
-+      action: log.action,
-+      templateId: log.templateId,
-+      replyContent: log.replyContent,
-+      result: log.result,
-+      timestamp: log.createdAt,
-+    }))
-+    paths.push({ customerId: cid, steps, totalDays, result })
-+  }
+    // 使用已经分组好的日志，避免 N+1 查询
+    const logs = logsByCustomer[cid] || []
+    if (logs.length === 0) continue
+    // 复用内部逻辑但不再次查询数据库
+    const firstDate = logs[0].createdAt
+    const lastDate = logs[logs.length - 1].createdAt
+    const totalDays = Math.floor((lastDate.getTime() - firstDate.getTime()) / DAY_MS)
+    const lastLog = logs[logs.length - 1]
+    let result: 'won' | 'lost' | 'ongoing' = 'ongoing'
+    if (lastLog.result === 'converted' || lastLog.result === 'won') result = 'won'
+    else if (lastLog.result === 'lost' || lastLog.result === 'rejected') result = 'lost'
+    const steps: ConversionStep[] = logs.map((log, i) => ({
+      day: i === 0 ? 0 : Math.floor((log.createdAt.getTime() - firstDate.getTime()) / DAY_MS),
+      intent: log.intent,
+      stage: log.stage,
+      action: log.action,
+      templateId: log.templateId,
+      replyContent: log.replyContent,
+      result: log.result,
+      timestamp: log.createdAt,
+    }))
+    paths.push({ customerId: cid, steps, totalDays, result })
+  }
 
   return paths
 }

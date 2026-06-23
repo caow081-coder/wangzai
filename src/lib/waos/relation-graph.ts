@@ -97,9 +97,9 @@ export function detectReferralChain(customerId: string): { referrerId: string; r
   const visited = new Set<string>() // edge IDs visited
   for (const edge of g.edges) {
     if (edge.type === 'recommended' && !visited.has(edge.id)) {
-+      // simple cycle prevention: if a node refers to itself indirectly, skip
-+      if (edge.fromId === edge.toId) continue
-+      visited.add(edge.id)
+      // simple cycle prevention: if a node refers to itself indirectly, skip
+      if (edge.fromId === edge.toId) continue
+      visited.add(edge.id)
       const referred = g.nodes.get(edge.toId)
       if (referred) {
         chains.push({

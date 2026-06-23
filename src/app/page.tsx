@@ -19,7 +19,6 @@ import { PersonaMarket } from '@/components/waos/PersonaMarket'
 import { DashboardPanel } from '@/components/waos/DashboardPanel'
 import { DownloadFloat } from '@/components/waos/DownloadFloat'
 import { BrainSettings } from '@/components/waos/BrainSettings'
-import { Splashscreen } from '@/components/waos/Splashscreen'
 import { ErrorBoundary } from '@/components/waos/ErrorBoundary'
 import { UpdateChecker } from '@/components/waos/UpdateChecker'
 import { KnowledgePanel } from '@/components/waos/KnowledgePanel'
@@ -36,18 +35,12 @@ export default function Home() {
   useKeyboardShortcuts()
   usePersistence()
 
-  // Sprint 5-1: 首次启动 Onboarding 引导
+  // 首次启动直接显示 Onboarding（不再等旧 Splashscreen）
   useEffect(() => {
     try {
       const completed = localStorage.getItem('waos_onboarding_completed') === 'true'
-      if (!completed) {
-        // 等 Splashscreen 淡出后再弹出（2.5s），避免视觉打架
-        const t = setTimeout(() => setShowOnboarding(true), 2800)
-        return () => clearTimeout(t)
-      }
-    } catch {
-      // localStorage 被禁用（隐私模式）— 不弹引导
-    }
+      if (!completed) setShowOnboarding(true)
+    } catch { /* localStorage 不可用 */ }
   }, [])
 
   useEffect(() => {
@@ -57,7 +50,7 @@ export default function Home() {
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground overflow-hidden">
-      <Splashscreen />
+      {showOnboarding && <Onboarding onComplete={() => setShowOnboarding(false)} />}
       <TopBar />
       <div className="flex flex-1 min-h-0">
         <div className="flex-1 min-w-0 flex flex-col bg-secondary/30 border-r border-border/60">
@@ -65,14 +58,12 @@ export default function Home() {
             <WeChatClient />
           </ErrorBoundary>
         </div>
-        {/* 右侧决策面板：加宽到 460px，最小 380px，最大 560px，避免内容拥挤 */}
         <div className="w-[460px] min-w-[380px] max-w-[560px] flex flex-col bg-background border-l border-border/60">
           <ErrorBoundary>
             <DecisionPanel />
           </ErrorBoundary>
         </div>
       </div>
-      {/* 底部事件流：深色背景用设计 token 而非硬编码 zinc-950 */}
       <div className="h-[140px] min-h-[100px] max-h-[200px] bg-zinc-950 dark:bg-zinc-950 border-t border-border">
         <EventStream />
       </div>
@@ -88,14 +79,11 @@ export default function Home() {
       <KnowledgePanel />
       <DownloadFloat />
       <UpdateChecker />
-      {/* Sprint 5-1: 首次启动引导 */}
-      {showOnboarding && <Onboarding onComplete={() => setShowOnboarding(false)} />}
-      {/* Sprint 5-3: 快捷键帮助面板（按 ? 召唤）*/}
       <ShortcutsHelp />
       {connection !== 'connected' && (
         <div className="fixed top-16 right-4 z-50 px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 border border-amber-500/30 backdrop-blur">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse mr-1.5 align-middle" />
-          {connection === 'connecting' ? '连接中…' : '重连中…'}
+          离线模式
         </div>
       )}
     </div>

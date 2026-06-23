@@ -153,6 +153,67 @@ if (!globalForPrisma.prisma) {
 
 export const db = globalForPrisma.prisma!
 
+// ─── WAOS 新模型兼容层（表已在 SQLite 但 Prisma Client 未重新生成）─────
+// 原因: prisma generate 被 Hermes 进程锁住 DLL 无法执行
+// 方案: 用 Proxy 拦截新模型调用，转发到 $queryRawUnsafe
+const NEW_MODELS = ['truthDocument', 'memoryLong', 'relationNode', 'relationEdge', 'ethicsRule', 'decisionLog', 'learningReview'] as const
+type NewModel = typeof NEW_MODELS[number]
+
+function createRawDelegate(modelName: string) {
+  const tableName = modelName.charAt(0).toUpperCase() + modelName.slice(1)
+  return {
+    async findMany(args: any = {}) {
+      const where = args.where ? `WHERE ${Object.entries(args.where).map(([k,v]) => `"${k}" = ${typeof v === 'string' ? `'${v.replace(/'/g,"''")}'` : v}`).join(' AND ')}` : ''
+      const order = args.orderBy ? `ORDER BY "${Object.keys(args.orderBy)[0]}" ${Object.values(args.orderBy)[0]}` : ''
+      const limit = args.take ? `LIMIT ${args.take}` : ''
+      const offset = args.skip ? `OFFSET ${args.skip}` : ''
+      return db.$queryRawUnsafe(`SELECT * FROM "${tableName}" ${where} ${order} ${limit} ${offset}`)
+    },
+    async findFirst(args: any = {}) {
+      const rows = await this.findMany({ ...args, take: 1 })
+      return rows[0] || null
+    },
+    async findUnique(args: any = {}) {
+      return this.findFirst(args)
+    },
+    async create(args: any = {}) {
+      const data = args.data || {}
+      const keys = Object.keys(data)
+      const vals = keys.map(k => typeof data[k] === 'string' ? `'${data[k].replace(/'/g,"''")}'` : data[k] ?? 'NULL')
+      await db.$executeRawUnsafe(`INSERT INTO "${tableName}" (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${vals.join(',')})`)
+      return data
+    },
+    async update(args: any = {}) {
+      const where = args.where ? Object.entries(args.where).map(([k,v]) => `"${k}" = ${typeof v === 'string' ? `'${v}'` : v}`).join(' AND ') : ''
+      const sets = args.data ? Object.entries(args.data).map(([k,v]) => `"${k}" = ${typeof v === 'string' ? `'${v.replace(/'/g,"''")}'` : v}`).join(', ') : ''
+      await db.$executeRawUnsafe(`UPDATE "${tableName}" SET ${sets} WHERE ${where}`)
+      return args.data
+    },
+    async delete(args: any = {}) {
+      const where = args.where ? Object.entries(args.where).map(([k,v]) => `"${k}" = ${typeof v === 'string' ? `'${v}'` : v}`).join(' AND ') : ''
+      await db.$executeRawUnsafe(`DELETE FROM "${tableName}" WHERE ${where}`)
+      return { deleted: true }
+    },
+    async deleteMany(args: any = {}) {
+      const where = args.where ? Object.entries(args.where).map(([k,v]) => `"${k}" = ${typeof v === 'string' ? `'${v}'` : v}`).join(' AND ') : ''
+      await db.$executeRawUnsafe(`DELETE FROM "${tableName}" WHERE ${where}`)
+      return { count: 1 }
+    },
+    async count(args: any = {}) {
+      const where = args.where ? `WHERE ${Object.entries(args.where).map(([k,v]) => `"${k}" = ${typeof v === 'string' ? `'${v}'` : v}`).join(' AND ')}` : ''
+      const rows = await db.$queryRawUnsafe(`SELECT COUNT(*) as c FROM "${tableName}" ${where}`)
+      return (rows as any)[0]?.c || 0
+    },
+  }
+}
+
+// 为新模型注入 delegate（运行时动态添加）
+for (const model of NEW_MODELS) {
+  if (!(model in db)) {
+    (db as any)[model] = createRawDelegate(model)
+  }
+}
+
 // AUDIT-SEC-REL: 启用 SQLite WAL 模式
 // 默认 journal_mode=DELETE，写操作会阻塞读操作，并发场景下出现 "database is locked" 错误。
 // WAL 模式允许读写并发，断电时通过 -wal 文件恢复，更可靠。

@@ -7,11 +7,11 @@
  * 增强管道 (vs v3.0):
  *   1. Input sanitization (安全护盾)
  *   2. Circuit breaker check (熔断器)
- *   3. Truth + Memory injection (真理层 + 记忆引擎注入)
- *   4. Context assembly (persona + truth + memories + history)
+ *   3. Truth + Memory + Persona + Relation injection (4引擎上下文注入)
+ *   4. Context assembly (persona + truth + memories + relation graph)
  *   5. LLM call via z-ai-web-dev-sdk
  *   6. Ethics review (伦理层审查 AI 输出)
- *   7. Decision log (决策日志回放)
+ *   7. Decision log (决策日志回放引擎)
  *   8. Output filter (安全护盾)
  *   9. Fallback
  */
@@ -26,6 +26,9 @@ import {
 import { ethicsReview } from '@/lib/waos/ethics'
 import { queryTruth, verifyClaim } from '@/lib/waos/truth'
 import { retrieveMemories, formatMemoriesForPrompt } from '@/lib/waos/memory'
+import { generatePersonaConstraint } from '@/lib/waos/persona-anchor'
+import { buildRelationContext } from '@/lib/waos/relation-graph'
+import { logDecision } from '@/lib/waos/decision-replay'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -108,9 +111,11 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // 3. Truth + Memory injection（真理层 + 记忆引擎）─────────
+  // 3. Truth + Memory + Persona + Relation injection ─────
   let truthContext = ''
   let memoryContext = ''
+  let personaContext = ''
+  let relationContext = ''
   try {
     const truthDocs = await queryTruth(userMessage, 2)
     if (truthDocs.length > 0) {
@@ -123,13 +128,20 @@ export async function POST(req: NextRequest) {
     const memories = await retrieveMemories(cid, userMessage, 3)
     memoryContext = formatMemoriesForPrompt(memories)
   } catch { /* non-critical */ }
+  try {
+    personaContext = generatePersonaConstraint('default')
+  } catch { /* non-critical */ }
+  try {
+    const cid = customerId || leadId
+    relationContext = buildRelationContext(cid)
+  } catch { /* non-critical */ }
 
-  // 4. Build messages with persona + truth + memories + safety constraints
+  // 4. Build messages with all engine contexts
   const personaIntro = personaName
     ? `\n\n你当前的人设是：${personaName}。请严格按照这个人设的语气和风格回复。`
     : ''
 
-  const systemContent = SYSTEM_CONSTRAINTS + personaIntro + truthContext + memoryContext
+  const systemContent = SYSTEM_CONSTRAINTS + personaIntro + personaContext + truthContext + memoryContext + relationContext
 
   const messages: { role: 'assistant' | 'user'; content: string }[] = [
     { role: 'assistant', content: systemContent },
@@ -178,6 +190,24 @@ export async function POST(req: NextRequest) {
       // 6. Output filter
       const filtered = safetyFilter(raw)
       recordSuccess()
+
+      // 7. Decision Log — record for replay engine ─────────
+      try {
+        const cid = customerId || leadId
+        await logDecision({
+          customerId: cid,
+          intent: null,
+          stage: null,
+          personaMix: personaName || 'default',
+          action: 'reply',
+          templateId: null,
+          replyContent: filtered.safe,
+          result: 'replied',
+          confidence: 80,
+          latency: Date.now() - startedAt,
+          tokensUsed: Math.ceil((systemContent + userMessage + filtered.safe).length / 4),
+        })
+      } catch { /* non-critical */ }
 
       return NextResponse.json({
         leadId,
@@ -236,9 +266,12 @@ export async function GET(req: NextRequest) {
       'circuit_breaker_check',
       'truth_injection',
       'memory_injection',
+      'persona_anchor',
+      'relation_graph',
       'context_assembly',
       'llm_call',
       'ethics_review',
+      'decision_log',
       'output_filter',
       'fallback',
     ],

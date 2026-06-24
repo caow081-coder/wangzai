@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
+    "postinstall": "prisma generate",
     "electron:dev": "electron electron/main.js",
     "electron:build": "next build && node scripts/copy-assets.js && electron-builder --win --x64"
   },
@@ -24,7 +25,13 @@
       "output": "release",
       "buildResources": "electron/build"
     },
-    "asar": false,
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node",
+      "**/node_modules/sharp/**",
+      "**/node_modules/@prisma/client/**",
+      "**/node_modules/.prisma/**"
+    ],
     "files": [
       "electron/**/*",
       "!electron/build/**",
@@ -73,8 +80,8 @@
       "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
       "installerIcon": "electron/build/icon.ico",
-            "uninstallerIcon": "electron/build/icon.ico",
-            "installerHeaderIcon": "electron/build/icon.ico",
+      "uninstallerIcon": "electron/build/icon.ico",
+      "installerHeaderIcon": "electron/build/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "旺财",
@@ -132,7 +139,6 @@
     "input-otp": "^1.4.2",
     "lucide-react": "^0.525.0",
     "next": "^16.1.1",
-    "next-auth": "^4.24.11",
     "next-themes": "^0.4.6",
     "react": "^19.0.0",
     "react-day-picker": "^9.14.0",

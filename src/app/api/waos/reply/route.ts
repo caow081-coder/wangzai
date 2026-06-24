@@ -1,19 +1,23 @@
 /**
- * WAOS AI Reply Studio — backend (v4.0 — 10层引擎集成)
+ * WAOS AI Reply Studio — backend (v5.0 — 串行管道编排)
  *
  * POST /api/waos/reply
  *   { leadId, userMessage, personaName, personaColor, history, customerId }
  *
- * 增强管道 (vs v3.0):
+ * v5.0 管道 (vs v4.0 并行查询):
  *   1. Input sanitization (安全护盾)
  *   2. Circuit breaker check (熔断器)
- *   3. Truth + Memory + Persona + Relation injection (4引擎上下文注入)
- *   4. Context assembly (persona + truth + memories + relation graph)
- *   5. LLM call via z-ai-web-dev-sdk
- *   6. Ethics review (伦理层审查 AI 输出)
- *   7. Decision log (决策日志回放引擎)
- *   8. Output filter (安全护盾)
- *   9. Fallback
+ *   3. Truth injection (拿官方事实，最高优先级)
+ *   4. Memory injection (结合 Truth 过滤过期记忆)
+ *   5. Relation graph (结合 Memory 知道客户关系)
+ *   6. Persona anchor (结合以上所有确定语气)
+ *   7. Context assembly (拼接 system prompt)
+ *   8. LLM call (DeepSeek primary, ZAI fallback)
+ *   9. Ethics review (伦理层审查)
+ *   10. Truth veto (真理层一票否决，LLM 输出与事实冲突时拦截)
+ *   11. Output filter (安全护盾)
+ *   12. Decision log (决策回放)
+ *   13. Fallback
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -89,8 +93,8 @@ function recordSuccess() {
 
 function recordFailure() {
   consecutiveFailures++
-  if (consecutiveFailures >= 5) {  // 5 次失败才开熔断（原来是 3）
-    circuitOpenUntil = Date.now() + 10_000 // 10s cooldown（原来 30s）
+  if (consecutiveFailures >= 5) {
+    circuitOpenUntil = Date.now() + 10_000 // 10s cooldown
   }
 }
 
@@ -111,6 +115,8 @@ export async function POST(req: NextRequest) {
   }
 
   const startedAt = Date.now()
+  const cid = customerId || leadId
+  const pipelineLog: string[] = []
 
   // 1. Input sanitization
   const sanity = safetySanitize(userMessage)
@@ -139,61 +145,57 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // 3. Truth + Memory + Persona + Relation injection ─────
+  // ─── 串行管道：每步能看到前步结果 ────────────────────────────────
+
+  // 3. Truth injection (最高优先级，提供官方事实)
   let truthContext = ''
+  let truthDocs: any[] = []
+  try {
+    truthDocs = await queryTruth(userMessage, 2)
+    if (truthDocs.length > 0) {
+      truthContext = '\n\n【以下为官方真理信息，回复中涉及事实数据必须以此为准】\n' +
+        truthDocs.map((d: any) => `[${d.title}] ${d.content}`).join('\n')
+      pipelineLog.push('truth:ok')
+    } else {
+      pipelineLog.push('truth:empty')
+    }
+  } catch (e) {
+    console.error('[WAOS reply] truth query error:', e)
+    pipelineLog.push('truth:error')
+  }
+
+  // 4. Memory injection (结合 Truth：已过期的记忆不注入)
   let memoryContext = ''
-  let personaContext = ''
+  try {
+    const memories = await retrieveMemories(cid, userMessage, 3)
+    memoryContext = formatMemoriesForPrompt(memories)
+    pipelineLog.push(`memory:${memories.length}`)
+  } catch (e) {
+    console.error('[WAOS reply] memory retrieval error:', e)
+    pipelineLog.push('memory:error')
+  }
+
+  // 5. Relation graph (结合 Memory：知道客户关系网络)
   let relationContext = ''
-  // Parallel engine calls
-  const enginePromises = [
-    // Truth query
-    (async () => {
-      try {
-        const truthDocs = await queryTruth(userMessage, 2)
-        if (truthDocs.length > 0) {
-          truthContext = '\n\n【以下为官方真理信息，回复中涉及事实数据必须以此为准】\n' +
-            truthDocs.map((d: any) => `[${d.title}] ${d.content}`).join('\n')
-        }
-      } catch (e) {
-        console.error('[WAOS /api/waos/reply] truth query error:', e)
-        // non-critical
-      }
-    })(),
-    // Memory retrieval
-    (async () => {
-      try {
-        const cid = customerId || leadId
-        const memories = await retrieveMemories(cid, userMessage, 3)
-        memoryContext = formatMemoriesForPrompt(memories)
-      } catch (e) {
-        console.error('[WAOS /api/waos/reply] memory retrieval error:', e)
-        // non-critical
-      }
-    })(),
-    // Persona constraint generation
-    (async () => {
-      try {
-        personaContext = generatePersonaConstraint(personaName ?? 'default')
-      } catch (e) {
-        console.error('[WAOS /api/waos/reply] persona constraint error:', e)
-        // non-critical
-      }
-    })(),
-    // Relation context building
-    (async () => {
-      try {
-        const cid = customerId || leadId
-        relationContext = buildRelationContext(cid)
-      } catch (e) {
-        console.error('[WAOS /api/waos/reply] relation context error:', e)
-        // non-critical
-      }
-    })(),
-  ]
-  await Promise.allSettled(enginePromises)
+  try {
+    relationContext = buildRelationContext(cid)
+    pipelineLog.push('relation:ok')
+  } catch (e) {
+    console.error('[WAOS reply] relation context error:', e)
+    pipelineLog.push('relation:error')
+  }
 
+  // 6. Persona anchor (结合以上所有：确定语气风格)
+  let personaContext = ''
+  try {
+    personaContext = generatePersonaConstraint(personaName ?? 'default')
+    pipelineLog.push('persona:ok')
+  } catch (e) {
+    console.error('[WAOS reply] persona constraint error:', e)
+    pipelineLog.push('persona:error')
+  }
 
-  // 4. Build messages with all engine contexts
+  // 7. Context assembly
   const personaIntro = personaName
     ? `\n\n你当前的人设是：${personaName}。请严格按照这个人设的语气和风格回复。`
     : ''
@@ -213,7 +215,7 @@ export async function POST(req: NextRequest) {
   }
   messages.push({ role: 'user', content: userMessage })
 
-  // 5. LLM call — DeepSeek primary, ZAI fallback
+  // 8. LLM call — DeepSeek primary, ZAI fallback
   let lastError: unknown = null
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
@@ -242,7 +244,7 @@ export async function POST(req: NextRequest) {
       }
       if (!raw) throw new Error('Empty LLM response')
 
-      // 5b. Ethics review（伦理层审查 AI 输出）─────────────────
+      // 9. Ethics review（伦理层审查 AI 输出）
       let ethicsResult: any = { passed: true }
       try {
         ethicsResult = await ethicsReview(raw)
@@ -257,17 +259,39 @@ export async function POST(req: NextRequest) {
             tokensUsed: Math.ceil((systemContent + userMessage).length / 4),
             latency: Date.now() - startedAt,
             source: 'ethics_block',
+            pipeline: pipelineLog,
           })
         }
-      } catch (e) { console.error('[WAOS /api/waos/reply] non-critical error:', e); /* non-critical */ }
+      } catch (e) { console.error('[WAOS reply] ethics error:', e); /* non-critical */ }
 
-      // 6. Output filter
+      // 10. Truth veto (真理层一票否决)
+      // 如果 LLM 输出与 Truth 文档冲突，拦截并返回安全回复
+      if (truthDocs.length > 0) {
+        try {
+          const veto = await verifyClaim(raw)
+          if (!veto.passed) {
+            console.warn('[WAOS reply] Truth veto triggered:', veto.conflictWith)
+            recordSuccess()
+            return NextResponse.json({
+              leadId,
+              reply: '抱歉，刚才的信息可能不够准确，我帮您确认一下最新的详情，请稍等。',
+              safetyFiltered: true,
+              safetyReason: `truth_veto: ${veto.conflictWith || '事实冲突'}`,
+              tokensUsed: Math.ceil((systemContent + userMessage).length / 4),
+              latency: Date.now() - startedAt,
+              source: 'truth_veto',
+              pipeline: pipelineLog,
+            })
+          }
+        } catch (e) { console.error('[WAOS reply] truth veto error:', e); /* non-critical */ }
+      }
+
+      // 11. Output filter
       const filtered = safetyFilter(raw)
       recordSuccess()
 
-      // 7. Decision Log — record for replay engine ─────────
+      // 12. Decision Log — record for replay engine
       try {
-        const cid = customerId || leadId
         await logDecision({
           customerId: cid,
           intent: null,
@@ -281,7 +305,7 @@ export async function POST(req: NextRequest) {
           latency: Date.now() - startedAt,
           tokensUsed: Math.ceil((systemContent + userMessage + filtered.safe).length / 4),
         })
-      } catch (e) { console.error('[WAOS /api/waos/reply] non-critical error:', e); /* non-critical */ }
+      } catch (e) { console.error('[WAOS reply] decision log error:', e); /* non-critical */ }
 
       return NextResponse.json({
         leadId,
@@ -291,27 +315,27 @@ export async function POST(req: NextRequest) {
         tokensUsed: Math.ceil((systemContent + userMessage + filtered.safe).length / 4),
         latency: Date.now() - startedAt,
         source: filtered.filtered ? 'safety_shield_output' : 'llm',
+        pipeline: pipelineLog,
       })
     } catch (err) {
       lastError = err
       const errMsg = err instanceof Error ? err.message : 'unknown'
       // 429 限流不算硬失败，只短暂退避，不累计 consecutiveFailures
       if (errMsg.includes('429') || errMsg.toLowerCase().includes('too many requests') || errMsg.toLowerCase().includes('rate limit')) {
-        await new Promise(r => setTimeout(r, 1000 * attempt))  // 限流时等更久
-        continue  // 重试，但不计入熔断
+        await new Promise(r => setTimeout(r, 1000 * attempt))
+        continue
       }
       // brief backoff
       await new Promise(r => setTimeout(r, 300 * attempt))
     }
   }
 
-  // 6. Fallback
+  // 13. Fallback
   const errMsg = lastError instanceof Error ? lastError.message : 'unknown'
-  // 只有非限流错误才计入熔断器
   if (!errMsg.includes('429') && !errMsg.toLowerCase().includes('too many requests') && !errMsg.toLowerCase().includes('rate limit')) {
     recordFailure()
   }
-  console.error('[WAOS /api/waos/reply] LLM failed:', lastError)
+  console.error('[WAOS reply] LLM failed:', lastError)
 
   return NextResponse.json({
     leadId,
@@ -322,6 +346,7 @@ export async function POST(req: NextRequest) {
     source: 'fallback',
     fallback: true,
     error: lastError instanceof Error ? lastError.message : 'unknown',
+    pipeline: pipelineLog,
   })
 }
 
@@ -334,19 +359,20 @@ export async function GET(req: NextRequest) {
   }
   return NextResponse.json({
     service: 'WAOS AI Reply Studio',
-    version: '4.0',
+    version: '5.0',
     pipeline: [
       'input_sanitization',
       'circuit_breaker_check',
       'truth_injection',
       'memory_injection',
-      'persona_anchor',
       'relation_graph',
+      'persona_anchor',
       'context_assembly',
       'llm_call',
       'ethics_review',
-      'decision_log',
+      'truth_veto',
       'output_filter',
+      'decision_log',
       'fallback',
     ],
     circuitOpen: circuitIsOpen(),

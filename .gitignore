@@ -9,6 +9,10 @@ node_modules
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
+# P0 FIX: 统一使用 bun，禁止 npm lock 文件
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
 # testing
 /coverage

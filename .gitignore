@@ -19,6 +19,7 @@ node_modules
 
 # production
 /build
+/release
 
 # misc
 .DS_Store
@@ -32,6 +33,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+.token
+.git-askpass.sh
 
 # vercel
 .vercel

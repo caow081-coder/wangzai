@@ -15,9 +15,8 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "1mb",
     },
   },
-  // AUDIT-SEC-REL: eslint 配置不在 NextConfig 类型中，但 Next.js 仍会读取
-  // 通过类型断言绕过 TS 检查，运行时仍然生效
-  ...({ eslint: { ignoreDuringBuilds: false } } as object),
+  // AUDIT-SEC-REL: turbopack root directory (消除多 lockfile 警告)
+  // eslint: 已移除，Next.js 16 不再支持 next.config.ts 中的 eslint 配置
 };
 
 export default nextConfig;

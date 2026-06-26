@@ -171,6 +171,30 @@ function main() {
     success++;
   }
 
+  // ─── Standalone 子目录 symlink 修复 ────────────────────────────
+  // Next.js standalone output 可能输出到 <projectName> 子目录，
+  // 而 copy-assets 把 prisma/db 复制到 standalone/ 根级，
+  // 需要 symlink 到 standalone/wangzai/ 下让 Prisma 能找到。
+  const subDir = path.join(standaloneDir, 'wangzai');
+  if (fs.existsSync(subDir) && fs.statSync(subDir).isDirectory()) {
+    for (const name of ['prisma', 'db']) {
+      const linkPath = path.join(subDir, name);
+      const targetPath = path.join(standaloneDir, name);
+      // 如果子目录下没有同名真实目录，则建 symlink
+      if (!fs.existsSync(linkPath) || fs.lstatSync(linkPath).isSymbolicLink()) {
+        try {
+          if (fs.existsSync(linkPath)) fs.unlinkSync(linkPath);
+          fs.symlinkSync(path.relative(subDir, targetPath), linkPath);
+          console.log(`  [symlink] ${name}: standalone/wangzai/${name} → standalone/${name}`);
+        } catch (e) {
+          console.warn(`  [skip] symlink ${name} 失败: ${e.message}`);
+        }
+      } else {
+        console.log(`  [skip] standalone/wangzai/${name} 已存在（真实目录），跳过 symlink`);
+      }
+    }
+  }
+
   console.log('\n────────────────────────────────────────────────');
   console.log(` 资源复制完成！成功 ${success} 项，跳过 ${skipped} 项。`);
   console.log('────────────────────────────────────────────────\n');

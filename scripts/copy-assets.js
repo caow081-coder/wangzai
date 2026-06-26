@@ -12,6 +12,7 @@
  *   3. prisma                  → .next/standalone/prisma         （Prisma schema 文件，运行时迁移用）
  *   4. db                      → .next/standalone/db             （SQLite 数据库文件，运行时读写）
  *   5. electron                → .next/standalone/electron       （Electron 主进程：main.js / preload / sandbox / stream-service）
+ *   6. electron主进程运行时依赖  → .next/standalone/node_modules   （socket.io / electron-updater / weixin-agent-sdk 等不在standalone自动追踪中的包）
  *
  * 设计要点：
  *   - 全程使用 path.join，跨平台兼容（Windows / Linux / macOS）
@@ -23,6 +24,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 // ─── 通用目录递归复制 ───────────────────────────────────────
 /**
@@ -125,6 +127,39 @@ function main() {
     const ok = copyDir(t.src, t.dest, t.exclude);
     if (ok) success++;
     else skipped++;
+  }
+
+  // ─── 安装 Electron 主进程运行时依赖 ────────────────────────
+  // Next.js standalone 只追踪服务端 API route 实际 require 的包。
+  // Electron 主进程 (main.js / stream-service.js) require 的包不在追踪范围内，
+  // 需要手动补充到 standalone/node_modules。
+  const electronDeps = [
+    'socket.io',          // stream-service.js: WebSocket 实时事件流
+    'socket.io-client',   // 前端 SDK
+    'electron-updater',   // main.js: 自动更新
+    'weixin-agent-sdk',   // bridge.ts: 动态 import 微信 SDK stub
+    'uuid',               // 多处使用
+  ];
+  const existingModules = fs.existsSync(path.join(standaloneDir, 'node_modules'))
+    ? fs.readdirSync(path.join(standaloneDir, 'node_modules'))
+    : [];
+  const missingDeps = electronDeps.filter(d => !existingModules.includes(d));
+
+  if (missingDeps.length > 0) {
+    console.log(`\n[安装] Electron 主进程运行时依赖: ${missingDeps.join(', ')}`);
+    try {
+      execSync(
+        `npm install --production --no-save ${missingDeps.join(' ')}`,
+        { cwd: standaloneDir, stdio: 'pipe', timeout: 120000 }
+      );
+      console.log('  ✅ 安装完成');
+      success++;
+    } catch (err) {
+      console.error('  ❌ 安装失败:', err.message?.substring(0, 200));
+      skipped++;
+    }
+  } else {
+    console.log('\n[跳过] Electron 运行时依赖已完整');
   }
 
   // 兜底：确保 standalone 下的 package.json 存在（electron-builder 需要）

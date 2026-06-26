@@ -65,3 +65,14 @@ temp/
 *.bak
 .waos-fix/
 tool-results/
+
+# logs
+logs/
+
+# packaging temp
+builder-debug.yml
+latest-linux.yml
+*.blockmap
+
+# worklog (local only)
+worklog.md

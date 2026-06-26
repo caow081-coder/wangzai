@@ -157,25 +157,25 @@ if (!globalForPrisma.prisma) {
   // BUG FIX: 原代码此处在 if (!globalForPrisma.prisma) 判断里，
   //   但 prisma 已在上面的代码中赋值，导致 PRAGMA 永远不会执行。
   //   现已移入同一代码块内，在 prisma 赋值后立即执行。
-  prismaClient.$executeRawUnsafe('PRAGMA journal_mode = WAL;')
-    .then((mode) => {
-      const modeStr = String(mode).toLowerCase()
+  prismaClient.$queryRawUnsafe('PRAGMA journal_mode = WAL;')
+    .then((rows: any[]) => {
+      const modeStr = String(rows?.[0]?.journal_mode ?? rows).toLowerCase()
       if (modeStr !== 'wal') {
         console.warn(`[DB] PRAGMA journal_mode 设置失败，当前为: ${modeStr}`)
       } else {
         console.log('[DB] SQLite WAL 模式已启用（读写并发 + 断电恢复）')
       }
     })
-    .catch((err) => {
+    .catch((err: any) => {
       console.error('[DB] 启用 WAL 模式失败:', err.message)
     })
 
   // 同步关闭时确保所有写入落盘（NORMAL 模式足够，FULL 太慢）
-  prismaClient.$executeRawUnsafe('PRAGMA synchronous = NORMAL;').catch(() => {})
+  prismaClient.$queryRawUnsafe('PRAGMA synchronous = NORMAL;').catch(() => {})
   // 单连接使用 5 秒忙等待，避免并发场景立即报 locked
-  prismaClient.$executeRawUnsafe('PRAGMA busy_timeout = 5000;').catch(() => {})
+  prismaClient.$queryRawUnsafe('PRAGMA busy_timeout = 5000;').catch(() => {})
   // 外键约束默认在 SQLite 中关闭，开启以保证 Lead/Message 等关系完整性
-  prismaClient.$executeRawUnsafe('PRAGMA foreign_keys = ON;').catch(() => {})
+  prismaClient.$queryRawUnsafe('PRAGMA foreign_keys = ON;').catch(() => {})
 }
 
 export const db = globalForPrisma.prisma!
